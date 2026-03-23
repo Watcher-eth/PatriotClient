@@ -115,7 +115,7 @@ function timelineTone(status?: TimelineEvent["status"]) {
     case "warning":
       return "border-white/12 bg-[#12161b]"
     default:
-      return "border-white/8 bg-[#0d1116]"
+      return "border-white/8 bg-[#101010]"
   }
 }
 
@@ -457,11 +457,11 @@ export function PatriotDashboard() {
   }, [selectedRun, timelineEvents])
 
   return (
-    <div className="relative h-dvh overflow-hidden bg-[#07090c] text-white industrial-grid">
+    <div className="relative h-dvh overflow-hidden bg-[#101010] text-white industrial-grid">
       <PatriotIntro visible={showIntro} />
       <PatriotHeader active="console" />
       <main className="grid h-[calc(100dvh-52px)] min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] overflow-hidden font-mono">
-        <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-white/10 bg-[#090c10]">
+        <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-white/10 bg-[#101010]">
           <div className="border-b border-white/10 px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -494,7 +494,7 @@ export function PatriotDashboard() {
                       "max-w-full truncate border px-2 py-1 text-[10px] uppercase tracking-[0.18em]",
                       session.id === selectedSessionId
                         ? "border-[#ec3844] bg-[#190d11] text-white"
-                        : "border-white/10 bg-[#0f1318] text-white/50 hover:text-white",
+                        : "border-white/10 bg-[#101010] text-white/50 hover:text-white",
                     )}
                   >
                     {session.title}
@@ -551,7 +551,7 @@ export function PatriotDashboard() {
             )}
           </div>
 
-          <div className="sticky bottom-0 z-10 border-t border-white/10 bg-[#0a0d11] px-4 py-4">
+          <div className="sticky bottom-0 z-10 border-t border-white/10 bg-[#101010] px-4 py-4">
             {selectedRun ? (
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.18em]", runStatusTone(selectedRun.status))}>
@@ -571,7 +571,7 @@ export function PatriotDashboard() {
               </div>
             ) : null}
 
-            <div className="border border-white/10 bg-[#0d1116]">
+            <div className="border border-white/10 bg-[#101010]">
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -596,7 +596,7 @@ export function PatriotDashboard() {
           </div>
         </section>
 
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#0b0f14]">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#101010]">
           <div className="border-b border-white/10 px-5 py-4">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -617,7 +617,7 @@ export function PatriotDashboard() {
                         "flex items-center gap-2 border px-3 py-1.5 text-[11px] uppercase tracking-[0.18em]",
                         activeTab === tab.id
                           ? "border-[#ec3844] bg-[#190d11] text-white"
-                          : "border-white/10 bg-[#0f1318] text-white/55 hover:text-white",
+                          : "border-white/10 bg-[#101010] text-white/55 hover:text-white",
                       )}
                     >
                       <Icon size={14} />
@@ -766,7 +766,7 @@ function TraceStepsCard({
 
 function EmptyChatState({ copy }: { copy: string }) {
   return (
-    <div className="mr-12 max-w-[92%] border border-dashed border-white/10 bg-[#0d1116] px-4 py-5 font-mono text-[12px] leading-6 text-white/55">
+    <div className="mr-12 max-w-[92%] border border-dashed border-white/10 bg-[#101010] px-4 py-5 font-mono text-[12px] leading-6 text-white/55">
       <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <AlertTriangle size={14} />
         Waiting on activity
@@ -797,7 +797,7 @@ function SummaryPanel({
         <MetricCard label="Assets" value={String(sessionState.report.assets.length).padStart(2, "0")} />
       </div>
 
-      <div className="border border-white/10 bg-[#0d1116] p-4">
+      <div className="border border-white/10 bg-[#101010] p-4">
         <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
           <Play size={14} />
           Reduced narrative
@@ -818,7 +818,7 @@ function FindingsPanel({ findings }: { findings: FindingRecord[] }) {
   return (
     <div className="space-y-3">
       {findings.map((finding) => (
-        <article key={finding.id} className="border border-white/10 bg-[#0d1116] p-4">
+        <article key={finding.id} className="border border-white/10 bg-[#101010] p-4">
           <div className="mb-3 flex items-center gap-2">
             <span className={cn("px-2 py-1 text-[10px] uppercase tracking-[0.18em]", severityTone(finding.severity))}>
               {finding.severity}
@@ -832,7 +832,7 @@ function FindingsPanel({ findings }: { findings: FindingRecord[] }) {
             <p className="mt-4 text-[13px] leading-6 text-white/72">{finding.description}</p>
           ) : null}
           {finding.remediation ? (
-            <div className="mt-4 border border-white/10 bg-[#0a0d11] p-3 text-[12px] leading-6 text-white/68">
+            <div className="mt-4 border border-white/10 bg-[#101010] p-3 text-[12px] leading-6 text-white/68">
               <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Remediation</div>
               {finding.remediation}
             </div>
@@ -851,7 +851,7 @@ function AssetsPanel({ assets }: { assets: AssetRecord[] }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       {assets.map((asset) => (
-        <article key={asset.id} className="border border-white/10 bg-[#0d1116] p-4">
+        <article key={asset.id} className="border border-white/10 bg-[#101010] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm uppercase tracking-[0.12em] text-white/88">{asset.label}</div>
@@ -883,7 +883,7 @@ function EvidencePanel({ evidence }: { evidence: ReducedToolEvidence[] }) {
   return (
     <div className="space-y-3">
       {evidence.map((entry) => (
-        <article key={`${entry.tool}-${entry.target ?? "none"}`} className="border border-white/10 bg-[#0d1116] p-4">
+        <article key={`${entry.tool}-${entry.target ?? "none"}`} className="border border-white/10 bg-[#101010] p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm uppercase tracking-[0.12em] text-white/88">{entry.tool}</div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{entry.status}</div>
@@ -908,7 +908,7 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactRecord[] }) {
   return (
     <div className="space-y-3">
       {artifacts.map((artifact) => (
-        <article key={artifact.id} className="border border-white/10 bg-[#0d1116] p-4">
+        <article key={artifact.id} className="border border-white/10 bg-[#101010] p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm uppercase tracking-[0.12em] text-white/88">{artifact.kind}</div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{formatDateTime(artifact.createdAt)}</div>
@@ -922,7 +922,7 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactRecord[] }) {
 
 function MetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
-    <div className="border border-white/10 bg-[#0d1116] p-4">
+    <div className="border border-white/10 bg-[#101010] p-4">
       <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
       <div className="mt-3 text-sm uppercase tracking-[0.12em] text-white/88">{value}</div>
       {detail ? <div className="mt-3 text-[12px] leading-6 text-white/58">{detail}</div> : null}
@@ -932,7 +932,7 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
 
 function EmptyPanel({ copy }: { copy: string }) {
   return (
-    <div className="border border-dashed border-white/10 bg-[#0d1116] p-5 text-[12px] leading-6 text-white/55">
+    <div className="border border-dashed border-white/10 bg-[#101010] p-5 text-[12px] leading-6 text-white/55">
       <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/45">
         <AlertTriangle size={14} />
         Waiting on data

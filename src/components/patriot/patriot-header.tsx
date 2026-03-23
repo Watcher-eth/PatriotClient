@@ -15,7 +15,7 @@ const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: st
 
 export function PatriotHeader({ active = "console" }: PatriotHeaderProps) {
   return (
-    <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#0a0d11] px-4 font-mono">
+    <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
         <div className="flex items-center gap-2">
           <Image

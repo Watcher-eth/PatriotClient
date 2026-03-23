@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useEffectEvent, useState } from "react"
+import { useEffect, useState } from "react"
 import { ArrowRight, LoaderCircle } from "lucide-react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
@@ -22,20 +22,28 @@ export function PatriotSessionsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refreshSessions = useEffectEvent(async () => {
-    setError(null)
-    try {
-      const response = await patriotApi.listSessions()
-      setSessions(response.sessions)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsLoading(false)
-    }
-  })
-
   useEffect(() => {
-    void refreshSessions()
+    let active = true
+
+    async function loadSessions() {
+      setError(null)
+      try {
+        const response = await patriotApi.listSessions()
+        if (!active) return
+        setSessions(response.sessions)
+      } catch (err) {
+        if (!active) return
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (active) setIsLoading(false)
+      }
+    }
+
+    void loadSessions()
+
+    return () => {
+      active = false
+    }
   }, [])
 
   return (

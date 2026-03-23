@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { startTransition, useEffect, useEffectEvent, useState } from "react"
+import { startTransition, useEffect, useState } from "react"
 import { ArrowLeft, LoaderCircle } from "lucide-react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
@@ -27,30 +27,38 @@ export function PatriotReportDetailPage({ runId }: { runId: string }) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refreshReport = useEffectEvent(async (id: string) => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const [runsResponse, reportResponse, artifactsResponse] = await Promise.all([
-        patriotApi.listRuns(),
-        patriotApi.getRunReport(id),
-        patriotApi.getRunArtifacts(id),
-      ])
-      startTransition(() => {
-        setRun(runsResponse.runs.find((entry) => entry.id === id) ?? null)
-        setReport(reportResponse)
-        setArtifacts(artifactsResponse.artifacts)
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsLoading(false)
-    }
-  })
-
   useEffect(() => {
     if (!runId) return
-    void refreshReport(runId)
+    let active = true
+
+    async function loadReport() {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const [runsResponse, reportResponse, artifactsResponse] = await Promise.all([
+          patriotApi.listRuns(),
+          patriotApi.getRunReport(runId),
+          patriotApi.getRunArtifacts(runId),
+        ])
+        if (!active) return
+        startTransition(() => {
+          setRun(runsResponse.runs.find((entry) => entry.id === runId) ?? null)
+          setReport(reportResponse)
+          setArtifacts(artifactsResponse.artifacts)
+        })
+      } catch (err) {
+        if (!active) return
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (active) setIsLoading(false)
+      }
+    }
+
+    void loadReport()
+
+    return () => {
+      active = false
+    }
   }, [runId])
 
   return (

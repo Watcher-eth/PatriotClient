@@ -19,16 +19,10 @@ import {
   ShieldAlert,
   Square,
 } from "lucide-react"
+import { AnimatePresence, motion } from "motion/react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
 import { PatriotIntro } from "@/components/patriot/patriot-intro"
-import {
-  Steps,
-  StepsContent,
-  StepsItem,
-  StepsTrigger,
-} from "@/components/prompt-kit/steps"
-import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -103,19 +97,6 @@ function severityTone(severity: FindingRecord["severity"]) {
       return "bg-[#171a1f] text-white/65"
     default:
       return "bg-[#101317] text-white/55"
-  }
-}
-
-function timelineTone(status?: TimelineEvent["status"]) {
-  switch (status) {
-    case "running":
-      return "border-[#ec3844]/25 bg-[#120d0f]"
-    case "failed":
-      return "border-[#ec3844]/45 bg-[#1b0f13]"
-    case "warning":
-      return "border-white/12 bg-[#12161b]"
-    default:
-      return "border-white/8 bg-[#101010]"
   }
 }
 
@@ -438,19 +419,7 @@ export function PatriotDashboard() {
 
   const traceState = useMemo(() => {
     const visibleTimelineEvents = timelineEvents.filter((event) => event.kind !== "artifact")
-    const latestEvent = visibleTimelineEvents.at(-1) ?? null
-    const triggerText =
-      latestEvent
-        ? formatTraceEvent(latestEvent).label
-        : selectedRun?.status === "running"
-          ? "Agent is executing the current run"
-          : selectedRun
-            ? `Run ${selectedRun.id.slice(0, 8)} ${selectedRun.status}`
-            : "Awaiting agent trace"
-
     return {
-      latestEvent,
-      triggerText,
       visibleTimelineEvents,
       hasTrace: Boolean(selectedRun) || visibleTimelineEvents.length > 0,
     }
@@ -540,10 +509,9 @@ export function PatriotDashboard() {
                 )}
 
                 {traceState.hasTrace ? (
-                  <TraceStepsCard
+                  <TraceTerminalStream
                     run={selectedRun}
                     timelineEvents={traceState.visibleTimelineEvents}
-                    triggerText={traceState.triggerText}
                     isActive={selectedRun?.status === "running"}
                   />
                 ) : null}
@@ -660,10 +628,10 @@ function OperatorMessageCard({
   at?: string
 }) {
   return (
-    <article className="ml-auto max-w-[88%] border border-[#ec3844]/35 bg-[#170d11] px-4 py-3 text-right">
-      <div className="mb-2 flex items-center justify-end gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
-        {at ? <div>{formatTime(at)}</div> : null}
-        <div className="border border-[#ec3844]/35 px-2 py-1 text-[#ffb7bc]">Operator</div>
+    <article className="ml-auto max-w-[88%] px-1 py-1 text-right">
+      <div className="mb-2 flex items-center justify-end gap-3 text-[10px] uppercase tracking-[0.18em] text-[#ff9da5]">
+        {at ? <div className="text-white/38">{formatTime(at)}</div> : null}
+        <div>Operator</div>
       </div>
       <div className="whitespace-pre-wrap text-[13px] leading-6 text-white">{content}</div>
     </article>
@@ -679,28 +647,54 @@ function AgentMessageCard({
   content: string
   at?: string
 }) {
+  const lines = content.split("\n")
+
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <div>{role === "assistant" ? "Patriot" : "System"}</div>
         {at ? <div>{formatTime(at)}</div> : null}
       </div>
-      <div className="whitespace-pre-wrap text-[12px] leading-6 text-white/78">{content}</div>
+      <AnimatePresence initial={false}>
+        {lines.map((line, index) => (
+          <motion.div
+            key={`${role}-${at ?? "none"}-${index}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, delay: Math.min(index * 0.03, 0.18) }}
+            className="whitespace-pre-wrap text-[12px] leading-6 text-white/78"
+          >
+            {line || " "}
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </article>
   )
 }
 
-function TraceStepsCard({
+function TerminalCursor() {
+  return (
+    <motion.span
+      className="ml-2 inline-block h-[12px] w-[7px] translate-y-[1px] bg-[#ec3844]"
+      animate={{ opacity: [0.9, 0.3, 0.9] }}
+      transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+    />
+  )
+}
+
+function TraceTerminalStream({
   run,
   timelineEvents,
-  triggerText,
   isActive,
 }: {
   run: RunRecord | null
   timelineEvents: TimelineEvent[]
-  triggerText: string
   isActive: boolean
 }) {
+  const terminalHost = "patriot@console"
+  const terminalCwd = "~/trace"
+
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
@@ -708,65 +702,76 @@ function TraceStepsCard({
         {run ? <div>{run.id.slice(0, 8)} / {run.status}</div> : null}
       </div>
 
-      <Steps defaultOpen>
-        <StepsTrigger className="text-left font-mono text-[11px] uppercase tracking-[0.16em] text-white/80 hover:text-white">
-          {isActive ? (
-            <TextShimmer className="font-mono text-[11px] uppercase tracking-[0.16em]">
-              {triggerText}
-            </TextShimmer>
-          ) : (
-            <span className="text-white/76">{triggerText}</span>
-          )}
-        </StepsTrigger>
-        <StepsContent
-          className="pt-1"
-          bar={<div className="h-full w-px bg-[#ec3844]/28" />}
+      {timelineEvents.length === 0 ? (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-[12px] leading-6 text-white/52"
         >
-          <div className="space-y-2">
-            {timelineEvents.length === 0 ? (
-              <StepsItem className="font-mono text-[12px] leading-5 text-white/52">
-                Waiting for live trace events...
-              </StepsItem>
-            ) : (
-              timelineEvents.map((event) => (
-                (() => {
-                  const formatted = formatTraceEvent(event)
-                  return (
-                    <StepsItem
-                      key={event.id}
-                      className={cn(
-                        "border px-3 py-2 font-mono text-[12px] leading-5 text-white/64",
-                        timelineTone(event.status),
-                        event.id === timelineEvents.at(-1)?.id && "text-white/88",
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-white/36">
-                        <span>{event.kind}</span>
-                        <span>{formatTime(event.ts)}</span>
-                      </div>
-                      <div className="mt-2 whitespace-pre-wrap">{formatted.label}</div>
-                      {formatted.facts.length > 0 ? (
-                        <div className="mt-2 space-y-1 text-[11px] leading-5 text-white/50">
-                          {formatted.facts.map((fact) => (
-                            <div key={fact}>{fact}</div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </StepsItem>
-                  )
-                })()
-              ))
-            )}
-          </div>
-        </StepsContent>
-      </Steps>
+          Waiting for live trace events...
+          {isActive ? <TerminalCursor /> : null}
+        </motion.div>
+      ) : (
+        <AnimatePresence initial={false}>
+          {timelineEvents.map((event, index) => {
+            const formatted = formatTraceEvent(event)
+            const isTool = event.kind === "tool"
+            const isLatest = event.id === timelineEvents.at(-1)?.id
+
+            return (
+              <motion.div
+                key={event.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.16) }}
+                className="mb-3"
+              >
+                <div className="flex items-start gap-3 text-[12px] leading-[1.5]">
+                  <div className="shrink-0 whitespace-nowrap text-white/42">
+                    <span className={cn("text-white/70", isTool && "text-[#ec3844]")}>{terminalHost}</span>
+                    <span className="text-white/28">:</span>
+                    <span className="text-white/38">{terminalCwd}</span>
+                    <span className={cn("text-white/28", isTool && "text-[#ec3844]/60")}>$</span>
+                  </div>
+
+                  <div className={cn("min-w-0 flex-1 text-white/72", isTool && "text-[#ec3844]")}>
+                    <span>{formatted.label}</span>
+                    {isActive && isLatest ? <TerminalCursor /> : null}
+                  </div>
+
+                  <div className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
+                    {formatTime(event.ts)}
+                  </div>
+                </div>
+
+                {formatted.facts.length > 0 ? (
+                  <div className="ml-[152px] mt-1 space-y-1 text-[11px] leading-5 text-white/52">
+                    {formatted.facts.map((fact) => (
+                      <motion.div
+                        key={`${event.id}-${fact}`}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.16 }}
+                      >
+                        {fact}
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : null}
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+      )}
     </article>
   )
 }
 
 function EmptyChatState({ copy }: { copy: string }) {
   return (
-    <div className="mr-12 max-w-[92%] border border-dashed border-white/10 bg-[#101010] px-4 py-5 font-mono text-[12px] leading-6 text-white/55">
+    <div className="mr-12 max-w-[92%] px-1 py-2 font-mono text-[12px] leading-6 text-white/55">
       <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <AlertTriangle size={14} />
         Waiting on activity

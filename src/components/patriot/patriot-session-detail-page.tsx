@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { startTransition, useEffect, useEffectEvent, useState } from "react"
+import { startTransition, useEffect, useState } from "react"
 import { ArrowLeft, ArrowRight, LoaderCircle, MessageSquareText } from "lucide-react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
@@ -33,28 +33,36 @@ export function PatriotSessionDetailPage({ sessionId }: { sessionId: string }) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refreshSession = useEffectEvent(async (id: string) => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const [stateResponse, messagesResponse] = await Promise.all([
-        patriotApi.getSessionState(id),
-        patriotApi.getSessionMessages(id),
-      ])
-      startTransition(() => {
-        setSessionState(stateResponse)
-        setMessages(messagesResponse.messages)
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsLoading(false)
-    }
-  })
-
   useEffect(() => {
     if (!sessionId) return
-    void refreshSession(sessionId)
+    let active = true
+
+    async function loadSession() {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const [stateResponse, messagesResponse] = await Promise.all([
+          patriotApi.getSessionState(sessionId),
+          patriotApi.getSessionMessages(sessionId),
+        ])
+        if (!active) return
+        startTransition(() => {
+          setSessionState(stateResponse)
+          setMessages(messagesResponse.messages)
+        })
+      } catch (err) {
+        if (!active) return
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (active) setIsLoading(false)
+      }
+    }
+
+    void loadSession()
+
+    return () => {
+      active = false
+    }
   }, [sessionId])
 
   return (

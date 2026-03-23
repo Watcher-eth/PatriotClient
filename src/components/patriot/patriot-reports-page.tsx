@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useEffectEvent, useState } from "react"
+import { useEffect, useState } from "react"
 import { ArrowRight, LoaderCircle } from "lucide-react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
@@ -13,21 +13,29 @@ export function PatriotReportsPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refreshRuns = useEffectEvent(async () => {
-    setError(null)
-    try {
-      setIsLoading(true)
-      const response = await patriotApi.listRuns()
-      setRuns(response.runs.filter((run) => run.reportPath || run.status === "completed"))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsLoading(false)
-    }
-  })
-
   useEffect(() => {
-    void refreshRuns()
+    let active = true
+
+    async function loadRuns() {
+      setError(null)
+      setIsLoading(true)
+      try {
+        const response = await patriotApi.listRuns()
+        if (!active) return
+        setRuns(response.runs.filter((run) => run.reportPath || run.status === "completed"))
+      } catch (err) {
+        if (!active) return
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (active) setIsLoading(false)
+      }
+    }
+
+    void loadRuns()
+
+    return () => {
+      active = false
+    }
   }, [])
 
   return (

@@ -502,12 +502,6 @@ export function PatriotDashboard() {
                 ))
               )}
             </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.18em]">
-              <StatCard label="Runs" value={String(runs.length).padStart(2, "0")} />
-              <StatCard label="Findings" value={String(sessionState?.report.findings.length ?? 0).padStart(2, "0")} />
-              <StatCard label="Assets" value={String(sessionState?.report.assets.length ?? 0).padStart(2, "0")} />
-            </div>
           </div>
 
           <div className="min-h-0 overflow-y-auto px-4 py-3">
@@ -602,7 +596,7 @@ export function PatriotDashboard() {
           </div>
         </section>
 
-        <section className="flex min-w-0 flex-col bg-[#0b0f14]">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#0b0f14]">
           <div className="border-b border-white/10 px-5 py-4">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -658,15 +652,6 @@ export function PatriotDashboard() {
   )
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border border-white/10 bg-[#0d1116] px-2 py-2">
-      <div className="text-white/35">{label}</div>
-      <div className="mt-2 text-lg text-white">{value}</div>
-    </div>
-  )
-}
-
 function OperatorMessageCard({
   content,
   at,
@@ -695,7 +680,7 @@ function AgentMessageCard({
   at?: string
 }) {
   return (
-    <article className="mr-12 max-w-[92%] border border-white/10 bg-[#0d1116] px-4 py-3 font-mono">
+    <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <div>{role === "assistant" ? "Patriot" : "System"}</div>
         {at ? <div>{formatTime(at)}</div> : null}
@@ -717,7 +702,7 @@ function TraceStepsCard({
   isActive: boolean
 }) {
   return (
-    <article className="mr-12 max-w-[92%] border border-white/10 bg-[#0c1014] px-4 py-3 font-mono">
+    <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <div>Agent trace</div>
         {run ? <div>{run.id.slice(0, 8)} / {run.status}</div> : null}

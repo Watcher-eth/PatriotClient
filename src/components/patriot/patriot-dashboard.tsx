@@ -86,9 +86,25 @@ function buildRunConfig(settings: OperatorRunSettings) {
   }
 }
 
+function detectBrowserOs(): "macos" | "windows" | "linux" | "unknown" {
+  if (typeof navigator === "undefined") return "unknown"
+  const value = [navigator.userAgent, navigator.platform].join(" ").toLowerCase()
+  if (value.includes("mac")) return "macos"
+  if (value.includes("win")) return "windows"
+  if (value.includes("linux")) return "linux"
+  return "unknown"
+}
+
 function mergeTimelineEvents(current: TimelineEvent[], incoming: TimelineEvent[]) {
   const map = new Map(current.map((item) => [item.id, item]))
-  for (const item of incoming) map.set(item.id, item)
+  for (const item of incoming) {
+    if (item.sourceEventType === "run.heartbeat") {
+      for (const [existingId, existing] of map.entries()) {
+        if (existing.sourceEventType === "run.heartbeat") map.delete(existingId)
+      }
+    }
+    map.set(item.id, item)
+  }
   return [...map.values()].sort((a, b) => a.ts.localeCompare(b.ts))
 }
 
@@ -274,6 +290,7 @@ export function PatriotDashboard() {
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [isResumingPendingLocalRun, setIsResumingPendingLocalRun] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
     model: "claude-sonnet-4-6",
@@ -287,6 +304,23 @@ export function PatriotDashboard() {
     runs.find((run) => run.id === selectedRunId) ??
     runs.find((run) => run.id === currentSession?.currentRunId) ??
     runs[0] ??
+    null
+  const pendingLocalPrompt =
+    currentSession?.metadata && typeof currentSession.metadata.pending_local_prompt === "string"
+      ? currentSession.metadata.pending_local_prompt
+      : null
+  const preferredFieldWorkerId =
+    currentSession?.metadata && typeof currentSession.metadata.field_sensor_worker_id === "string"
+      ? currentSession.metadata.field_sensor_worker_id
+      : null
+  const onlineFieldWorker =
+    workers.find(
+      (worker) =>
+        worker.type === "field_sensor" &&
+        worker.status === "online" &&
+        (!preferredFieldWorkerId || worker.id === preferredFieldWorkerId),
+    ) ??
+    workers.find((worker) => worker.type === "field_sensor" && worker.status === "online") ??
     null
 
   const refreshSessions = useEffectEvent(async () => {
@@ -363,6 +397,15 @@ export function PatriotDashboard() {
   useEffect(() => {
     void refreshWorkers()
   }, [])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshWorkers()
+      if (selectedSessionId) void refreshSession(selectedSessionId)
+    }, 10_000)
+
+    return () => window.clearInterval(timer)
+  }, [refreshSession, refreshWorkers, selectedSessionId])
 
   useEffect(() => {
     if (!deferredSessionId) return
@@ -453,7 +496,10 @@ export function PatriotDashboard() {
         role: "user",
         content,
         createRun: true,
-        run: buildRunConfig(runSettings),
+        run: {
+          ...buildRunConfig(runSettings),
+          operatorOs: detectBrowserOs(),
+        },
       })
       setDraft("")
       if (result.run) {
@@ -480,6 +526,28 @@ export function PatriotDashboard() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsStopping(false)
+    }
+  })
+
+  const continuePendingLocalRun = useEffectEvent(async () => {
+    if (!selectedSessionId) return
+    setIsResumingPendingLocalRun(true)
+    setError(null)
+    try {
+      const run = await patriotApi.resumePendingLocalRun(selectedSessionId, {
+        ...buildRunConfig(runSettings),
+        operatorOs: detectBrowserOs(),
+        workerId: onlineFieldWorker?.id ?? undefined,
+      })
+      startTransition(() => {
+        setSelectedRunId(run.id)
+        setTimelineEvents([])
+      })
+      await refreshSession(selectedSessionId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIsResumingPendingLocalRun(false)
     }
   })
 
@@ -576,6 +644,37 @@ export function PatriotDashboard() {
           </div>
 
           <div className="sticky bottom-0 z-10 border-t border-white/10 bg-[#101010] px-4 py-4">
+            {pendingLocalPrompt ? (
+              <div className="mb-3 border border-white/10 bg-white/[0.03] px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
+                      {onlineFieldWorker ? "Field worker connected" : "Waiting for field worker"}
+                    </div>
+                    <div className="mt-1 text-[12px] leading-5 text-white/82">
+                      {onlineFieldWorker
+                        ? `${onlineFieldWorker.name} is online and ready to continue the pending local request.`
+                        : "Patriot is waiting for a local field worker to come online for this request."}
+                    </div>
+                    <div className="mt-2 text-[11px] leading-5 text-white/50">
+                      {pendingLocalPrompt}
+                    </div>
+                  </div>
+                  {onlineFieldWorker ? (
+                    <Button
+                      type="button"
+                      onClick={() => void continuePendingLocalRun()}
+                      disabled={isResumingPendingLocalRun}
+                      className="rounded-none border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-white hover:bg-[#d82d39]"
+                    >
+                      {isResumingPendingLocalRun ? <LoaderCircle className="animate-spin" size={14} /> : <Play size={14} />}
+                      Continue
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
             {selectedRun ? (
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.18em]", runStatusTone(selectedRun.status))}>

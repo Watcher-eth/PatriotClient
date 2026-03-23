@@ -72,7 +72,7 @@ export type RunRecord = {
   sessionId?: string
   source: "web" | "telegram" | "api"
   workerId: string
-  workerType: "kali_cloud" | "kali_field" | "kali_customer_edge"
+  workerType: "kali_cloud" | "kali_field" | "kali_customer_edge" | "field_sensor"
   model?: string
   profile?: "recon" | "redteam"
   status: "queued" | "running" | "completed" | "failed" | "stopped"
@@ -86,6 +86,13 @@ export type RunRecord = {
   safetyEnabled: boolean
   summary?: string
   reportPath?: string
+  constraints?: {
+    requiresKali: boolean
+    requiresLocalPresence: boolean
+    requiresWirelessMonitor: boolean
+    requiresWirelessInjection: boolean
+  }
+  targetScope?: string[]
 }
 
 export type ArtifactRecord = {
@@ -99,8 +106,8 @@ export type ArtifactRecord = {
 export type WorkerRecord = {
   id: string
   name: string
-  type: "kali_cloud" | "kali_field" | "kali_customer_edge"
-  platform: "kali"
+  type: "kali_cloud" | "kali_field" | "kali_customer_edge" | "field_sensor"
+  platform: "kali" | "macos" | "windows" | "linux"
   runtime: Record<string, unknown>
   capabilities: string[]
   tailscaleIp?: string
@@ -175,6 +182,14 @@ export type SessionStateResponse = {
   runs: RunRecord[]
 }
 
+export type FieldSensorBootstrapInfo = {
+  token: string
+  os: "macos" | "windows"
+  command: string
+  expiresAt: string
+  scriptUrl: string
+}
+
 const API_BASE =
   process.env.NEXT_PUBLIC_PATRIOT_API_BASE?.replace(/\/$/, "") || "http://127.0.0.1:18080"
 
@@ -216,10 +231,29 @@ export const patriotApi = {
       createRun?: boolean
       run?: Partial<Pick<RunRecord, "source" | "model" | "profile" | "mode" | "tier" | "safetyEnabled" | "createdBy">> & {
         workerId?: string
+        operatorOs?: "macos" | "windows" | "linux" | "unknown"
       }
     },
   ) =>
     request<{ message: SessionMessageRecord; run?: RunRecord }>(`/v1/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  resumePendingLocalRun: (
+    sessionId: string,
+    body: {
+      source?: "web" | "telegram" | "api"
+      model?: string
+      profile?: "recon" | "redteam"
+      mode?: "plan" | "execute"
+      tier?: "recon" | "simulate" | "execute"
+      safetyEnabled?: boolean
+      createdBy?: string
+      operatorOs?: "macos" | "windows" | "linux" | "unknown"
+      workerId?: string
+    },
+  ) =>
+    request<RunRecord>(`/v1/sessions/${sessionId}/resume-pending-local-run`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -231,6 +265,16 @@ export const patriotApi = {
   stopRun: (runId: string) =>
     request<RunRecord>(`/v1/runs/${runId}/stop`, {
       method: "POST",
+    }),
+  issueFieldSensorBootstrap: (body: {
+    sessionId?: string
+    prompt: string
+    createdBy?: string
+    clientOs?: "macos" | "windows" | "linux" | "unknown"
+  }) =>
+    request<FieldSensorBootstrapInfo>("/v1/field-sensors/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 }
 

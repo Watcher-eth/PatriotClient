@@ -175,3 +175,12 @@ body {
     background-size: 24px 24px;
   }
 }
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -20% 0;
+  }
+}

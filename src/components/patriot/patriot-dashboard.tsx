@@ -7,25 +7,28 @@ import {
   useState,
 } from "react"
 import {
-  Activity,
   AlertTriangle,
-  Bot,
   Boxes,
   FileCode2,
   FileStack,
   FolderArchive,
   LoaderCircle,
-  MessageSquareText,
   Play,
   Plus,
   SendHorizontal,
   ShieldAlert,
   Square,
-  Terminal,
 } from "lucide-react"
 
 import { PatriotHeader } from "@/components/patriot/patriot-header"
 import { PatriotIntro } from "@/components/patriot/patriot-intro"
+import {
+  Steps,
+  StepsContent,
+  StepsItem,
+  StepsTrigger,
+} from "@/components/prompt-kit/steps"
+import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -43,9 +46,6 @@ import {
 } from "@/lib/patriot-api"
 
 type ViewTab = "summary" | "findings" | "assets" | "evidence" | "artifacts"
-type FeedItem =
-  | { id: string; at: string; kind: "user" | "assistant"; title: string; body: string; status?: string }
-  | { id: string; at: string; kind: "tool" | "subagent" | "artifact" | "status" | "verdict"; title: string; body: string; status?: string }
 
 const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
   { id: "summary", label: "Summary", icon: FileStack },
@@ -119,23 +119,12 @@ function timelineTone(status?: TimelineEvent["status"]) {
   }
 }
 
-function iconForFeed(kind: FeedItem["kind"]) {
-  switch (kind) {
-    case "user":
-      return <MessageSquareText size={14} className="text-[#ec3844]" />
-    case "assistant":
-      return <Bot size={14} className="text-white/65" />
-    case "tool":
-      return <Terminal size={14} className="text-[#ec3844]" />
-    case "subagent":
-      return <Bot size={14} className="text-white/65" />
-    case "artifact":
-      return <FolderArchive size={14} className="text-white/65" />
-    case "verdict":
-      return <ShieldAlert size={14} className="text-[#ec3844]" />
-    default:
-      return <Activity size={14} className="text-white/65" />
-  }
+function formatTimelineStep(event: TimelineEvent) {
+  const segments = [event.title, event.body]
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  return segments.join(" / ")
 }
 
 export function PatriotDashboard() {
@@ -343,26 +332,23 @@ export function PatriotDashboard() {
     }
   })
 
-  const feedItems = useMemo<FeedItem[]>(() => {
-    const messageItems: FeedItem[] = messages.map((message) => ({
-      id: message.id,
-      at: message.createdAt,
-      kind: message.role === "user" ? "user" : "assistant",
-      title: message.role === "user" ? "Operator input" : "Patriot summary",
-      body: message.content,
-    }))
+  const traceState = useMemo(() => {
+    const latestEvent = timelineEvents.at(-1) ?? null
+    const triggerText =
+      latestEvent
+        ? formatTimelineStep(latestEvent)
+        : selectedRun?.status === "running"
+          ? "Agent is executing the current run"
+          : selectedRun
+            ? `Run ${selectedRun.id.slice(0, 8)} ${selectedRun.status}`
+            : "Awaiting agent trace"
 
-    const opItems: FeedItem[] = timelineEvents.map((event) => ({
-      id: event.id,
-      at: event.ts,
-      kind: event.kind === "message" ? "assistant" : event.kind,
-      title: event.title,
-      body: event.body,
-      status: event.status,
-    }))
-
-    return [...messageItems, ...opItems].sort((a, b) => a.at.localeCompare(b.at))
-  }, [messages, timelineEvents])
+    return {
+      latestEvent,
+      triggerText,
+      hasTrace: Boolean(selectedRun) || timelineEvents.length > 0,
+    }
+  }, [selectedRun, timelineEvents])
 
   return (
     <div className="relative h-dvh overflow-hidden bg-[#07090c] text-white industrial-grid">
@@ -431,25 +417,36 @@ export function PatriotDashboard() {
                 Loading session
               </div>
             ) : (
-              <div className="space-y-3">
-                {feedItems.length === 0 ? (
-                  <FeedCard
-                    kind="status"
-                    title="No session activity"
-                    body="Create a session and send a recon prompt to start collecting trace data and reports."
-                  />
-                ) : (
-                  feedItems.map((item) => (
-                    <FeedCard
-                      key={item.id}
-                      kind={item.kind}
-                      title={item.title}
-                      body={item.body}
-                      at={item.at}
-                      status={item.status}
+              <div className="space-y-4">
+                {messages.length === 0 && !traceState.hasTrace ? (
+                  <EmptyChatState copy="Create a session and send a recon prompt to start collecting trace data and reports." />
+                ) : null}
+
+                {messages.map((message) =>
+                  message.role === "user" ? (
+                    <OperatorMessageCard
+                      key={message.id}
+                      content={message.content}
+                      at={message.createdAt}
                     />
-                  ))
+                  ) : (
+                    <AgentMessageCard
+                      key={message.id}
+                      role={message.role}
+                      content={message.content}
+                      at={message.createdAt}
+                    />
+                  ),
                 )}
+
+                {traceState.hasTrace ? (
+                  <TraceStepsCard
+                    run={selectedRun}
+                    timelineEvents={timelineEvents}
+                    triggerText={traceState.triggerText}
+                    isActive={selectedRun?.status === "running"}
+                  />
+                ) : null}
               </div>
             )}
           </div>
@@ -564,37 +561,115 @@ function StatCard({ label, value }: { label: string; value: string }) {
   )
 }
 
-function FeedCard({
-  kind,
-  title,
-  body,
+function OperatorMessageCard({
+  content,
   at,
-  status,
 }: {
-  kind: FeedItem["kind"]
-  title: string
-  body: string
+  content: string
   at?: string
-  status?: string
 }) {
-  const tone =
-    kind === "user"
-      ? "border-[#ec3844]/35 bg-[#160d10]"
-      : kind === "assistant"
-        ? "border-white/10 bg-[#0f1318]"
-        : timelineTone(status as TimelineEvent["status"] | undefined)
-
   return (
-    <article className={cn("border px-3 py-3", tone)}>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/58">
-          {iconForFeed(kind)}
-          {title}
-        </div>
-        {at ? <div className="text-[10px] uppercase tracking-[0.18em] text-white/30">{formatTime(at)}</div> : null}
+    <article className="ml-auto max-w-[88%] border border-[#ec3844]/35 bg-[#170d11] px-4 py-3 text-right">
+      <div className="mb-2 flex items-center justify-end gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
+        {at ? <div>{formatTime(at)}</div> : null}
+        <div className="border border-[#ec3844]/35 px-2 py-1 text-[#ffb7bc]">Operator</div>
       </div>
-      <div className="whitespace-pre-wrap text-[13px] leading-6 text-white/80">{body}</div>
+      <div className="whitespace-pre-wrap text-[13px] leading-6 text-white">{content}</div>
     </article>
+  )
+}
+
+function AgentMessageCard({
+  role,
+  content,
+  at,
+}: {
+  role: SessionMessageRecord["role"]
+  content: string
+  at?: string
+}) {
+  return (
+    <article className="mr-12 max-w-[92%] border border-white/10 bg-[#0d1116] px-4 py-3 font-mono">
+      <div className="mb-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
+        <div>{role === "assistant" ? "Patriot" : "System"}</div>
+        {at ? <div>{formatTime(at)}</div> : null}
+      </div>
+      <div className="whitespace-pre-wrap text-[12px] leading-6 text-white/78">{content}</div>
+    </article>
+  )
+}
+
+function TraceStepsCard({
+  run,
+  timelineEvents,
+  triggerText,
+  isActive,
+}: {
+  run: RunRecord | null
+  timelineEvents: TimelineEvent[]
+  triggerText: string
+  isActive: boolean
+}) {
+  return (
+    <article className="mr-12 max-w-[92%] border border-white/10 bg-[#0c1014] px-4 py-3 font-mono">
+      <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
+        <div>Agent trace</div>
+        {run ? <div>{run.id.slice(0, 8)} / {run.status}</div> : null}
+      </div>
+
+      <Steps defaultOpen>
+        <StepsTrigger className="text-left font-mono text-[11px] uppercase tracking-[0.16em] text-white/80 hover:text-white">
+          {isActive ? (
+            <TextShimmer className="font-mono text-[11px] uppercase tracking-[0.16em]">
+              {triggerText}
+            </TextShimmer>
+          ) : (
+            <span className="text-white/76">{triggerText}</span>
+          )}
+        </StepsTrigger>
+        <StepsContent
+          className="pt-1"
+          bar={<div className="h-full w-px bg-[#ec3844]/28" />}
+        >
+          <div className="space-y-2">
+            {timelineEvents.length === 0 ? (
+              <StepsItem className="font-mono text-[12px] leading-5 text-white/52">
+                Waiting for live trace events...
+              </StepsItem>
+            ) : (
+              timelineEvents.map((event) => (
+                <StepsItem
+                  key={event.id}
+                  className={cn(
+                    "border px-3 py-2 font-mono text-[12px] leading-5 text-white/64",
+                    timelineTone(event.status),
+                    event.id === timelineEvents.at(-1)?.id && "text-white/88",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-white/36">
+                    <span>{event.kind}</span>
+                    <span>{formatTime(event.ts)}</span>
+                  </div>
+                  <div className="mt-2 whitespace-pre-wrap">{formatTimelineStep(event)}</div>
+                </StepsItem>
+              ))
+            )}
+          </div>
+        </StepsContent>
+      </Steps>
+    </article>
+  )
+}
+
+function EmptyChatState({ copy }: { copy: string }) {
+  return (
+    <div className="mr-12 max-w-[92%] border border-dashed border-white/10 bg-[#0d1116] px-4 py-5 font-mono text-[12px] leading-6 text-white/55">
+      <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
+        <AlertTriangle size={14} />
+        Waiting on activity
+      </div>
+      {copy}
+    </div>
   )
 }
 

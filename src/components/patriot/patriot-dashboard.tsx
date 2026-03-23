@@ -15,6 +15,7 @@ import {
   LoaderCircle,
   Play,
   Plus,
+  Settings,
   SendHorizontal,
   ShieldAlert,
   Square,
@@ -37,6 +38,7 @@ import {
   type SessionRecord,
   type SessionStateResponse,
   type TimelineEvent,
+  type WorkerRecord,
 } from "@/lib/patriot-api"
 
 type ViewTab = "summary" | "findings" | "assets" | "evidence" | "artifacts"
@@ -48,6 +50,41 @@ const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
   { id: "evidence", label: "Evidence", icon: FileCode2 },
   { id: "artifacts", label: "Artifacts", icon: FolderArchive },
 ]
+
+type OperatorRunProfile = "recon" | "redteam"
+type OperatorModel = "claude-sonnet-4.6" | "claude-opus-4.6"
+type OperatorWorkerSelection = "auto" | string
+
+type OperatorRunSettings = {
+  model: OperatorModel
+  profile: OperatorRunProfile
+  workerId: OperatorWorkerSelection
+}
+
+const modelOptions: Array<{ value: OperatorModel; label: string }> = [
+  { value: "claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
+]
+
+const profileOptions: Array<{ value: OperatorRunProfile; label: string }> = [
+  { value: "recon", label: "Recon" },
+  { value: "redteam", label: "Redteam" },
+]
+
+function buildRunConfig(settings: OperatorRunSettings) {
+  const isRedteam = settings.profile === "redteam"
+  const tier: RunRecord["tier"] = isRedteam ? "execute" : "recon"
+  return {
+    source: "web" as const,
+    model: settings.model,
+    profile: settings.profile,
+    mode: "execute" as const,
+    tier,
+    safetyEnabled: !isRedteam,
+    createdBy: "operator",
+    workerId: settings.workerId === "auto" ? undefined : settings.workerId,
+  }
+}
 
 function mergeTimelineEvents(current: TimelineEvent[], incoming: TimelineEvent[]) {
   const map = new Map(current.map((item) => [item.id, item]))
@@ -215,6 +252,7 @@ function formatTraceEvent(event: TimelineEvent) {
 export function PatriotDashboard() {
   const [showIntro, setShowIntro] = useState(true)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [workers, setWorkers] = useState<WorkerRecord[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const deferredSessionId = useDeferredValue(selectedSessionId)
   const [sessionState, setSessionState] = useState<SessionStateResponse | null>(null)
@@ -229,6 +267,11 @@ export function PatriotDashboard() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
+    model: "claude-sonnet-4.6",
+    profile: "recon",
+    workerId: "auto",
+  })
 
   const currentSession = sessionState?.session ?? sessions.find((item) => item.id === selectedSessionId) ?? null
   const runs = sessionState?.runs ?? []
@@ -244,6 +287,23 @@ export function PatriotDashboard() {
       setSessions(response.sessions)
       if (!selectedSessionId && response.sessions.length > 0) setSelectedSessionId(response.sessions[0]!.id)
     })
+  })
+
+  const refreshWorkers = useEffectEvent(async () => {
+    try {
+      const response = await patriotApi.listWorkers()
+      startTransition(() => {
+        setWorkers(response.workers)
+        setRunSettings((current) => {
+          if (current.workerId === "auto") return current
+          return response.workers.some((worker) => worker.id === current.workerId)
+            ? current
+            : { ...current, workerId: "auto" }
+        })
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   })
 
   const refreshSession = useEffectEvent(async (sessionId: string) => {
@@ -290,6 +350,10 @@ export function PatriotDashboard() {
 
   useEffect(() => {
     void refreshSessions()
+  }, [])
+
+  useEffect(() => {
+    void refreshWorkers()
   }, [])
 
   useEffect(() => {
@@ -381,13 +445,7 @@ export function PatriotDashboard() {
         role: "user",
         content,
         createRun: true,
-        run: {
-          source: "web",
-          mode: "execute",
-          tier: "recon",
-          safetyEnabled: true,
-          createdBy: "operator",
-        },
+        run: buildRunConfig(runSettings),
       })
       setDraft("")
       if (result.run) {
@@ -428,7 +486,18 @@ export function PatriotDashboard() {
   return (
     <div className="relative h-dvh overflow-hidden bg-[#101010] text-white industrial-grid">
       <PatriotIntro visible={showIntro} />
-      <PatriotHeader active="console" />
+      <PatriotHeader
+        active="console"
+        settingsSlot={
+          <RunSettingsMenu
+            settings={runSettings}
+            workers={workers}
+            onModelChange={(model) => setRunSettings((current) => ({ ...current, model }))}
+            onProfileChange={(profile) => setRunSettings((current) => ({ ...current, profile }))}
+            onWorkerChange={(workerId) => setRunSettings((current) => ({ ...current, workerId }))}
+          />
+        }
+      />
       <main className="grid h-[calc(100dvh-52px)] min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] overflow-hidden font-mono">
         <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-white/10 bg-[#101010]">
           <div className="border-b border-white/10 px-4 py-4">
@@ -450,27 +519,6 @@ export function PatriotDashboard() {
               </Button>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              {sessions.length === 0 ? (
-                <div className="text-xs uppercase tracking-[0.18em] text-white/35">No sessions</div>
-              ) : (
-                sessions.slice(0, 6).map((session) => (
-                  <button
-                    key={session.id}
-                    type="button"
-                    onClick={() => setSelectedSessionId(session.id)}
-                    className={cn(
-                      "max-w-full truncate border px-2 py-1 text-[10px] uppercase tracking-[0.18em]",
-                      session.id === selectedSessionId
-                        ? "border-[#ec3844] bg-[#190d11] text-white"
-                        : "border-white/10 bg-[#101010] text-white/50 hover:text-white",
-                    )}
-                  >
-                    {session.title}
-                  </button>
-                ))
-              )}
-            </div>
           </div>
 
           <div className="min-h-0 overflow-y-auto px-4 py-3">
@@ -638,6 +686,86 @@ function OperatorMessageCard({
   )
 }
 
+function RunSettingsMenu({
+  settings,
+  workers,
+  onModelChange,
+  onProfileChange,
+  onWorkerChange,
+}: {
+  settings: OperatorRunSettings
+  workers: WorkerRecord[]
+  onModelChange: (value: OperatorModel) => void
+  onProfileChange: (value: OperatorRunProfile) => void
+  onWorkerChange: (value: OperatorWorkerSelection) => void
+}) {
+  return (
+    <details className="relative shrink-0">
+      <summary className="flex list-none cursor-pointer appearance-none items-center justify-center border-0 bg-transparent p-0 text-white/45 outline-none transition-colors hover:text-white [&::marker]:hidden [&::-webkit-details-marker]:hidden">
+        <Settings size={18} />
+      </summary>
+
+      <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-[min(280px,calc(100vw-24px))] max-w-[calc(100vw-24px)] origin-top-right border border-white/10 bg-[#101010] p-3 shadow-[0_18px_48px_rgba(0,0,0,0.45)]">
+        <div className="mb-3 text-[11px] uppercase tracking-[0.2em] text-white/42">Run settings</div>
+
+        <div className="space-y-3">
+          <label className="block">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/38">Model</div>
+            <select
+              value={settings.model}
+              onChange={(event) => onModelChange(event.target.value as OperatorModel)}
+              className="w-full border border-white/10 bg-[#101010] px-3 py-2 text-[12px] text-white outline-none"
+            >
+              {modelOptions.map((option) => (
+                <option key={option.value} value={option.value} className="bg-[#101010] text-white">
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/38">Mode</div>
+            <select
+              value={settings.profile}
+              onChange={(event) => onProfileChange(event.target.value as OperatorRunProfile)}
+              className="w-full border border-white/10 bg-[#101010] px-3 py-2 text-[12px] text-white outline-none"
+            >
+              {profileOptions.map((option) => (
+                <option key={option.value} value={option.value} className="bg-[#101010] text-white">
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/38">Worker</div>
+            <select
+              value={settings.workerId}
+              onChange={(event) => onWorkerChange(event.target.value)}
+              className="w-full border border-white/10 bg-[#101010] px-3 py-2 text-[12px] text-white outline-none"
+            >
+              <option value="auto" className="bg-[#101010] text-white">
+                Auto-select best worker
+              </option>
+              {workers.map((worker) => (
+                <option key={worker.id} value={worker.id} className="bg-[#101010] text-white">
+                  {worker.name} / {worker.status}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-3 border-t border-white/10 pt-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
+          {settings.model} / {settings.profile} / {settings.workerId === "auto" ? "auto worker" : settings.workerId}
+        </div>
+      </div>
+    </details>
+  )
+}
+
 function AgentMessageCard({
   role,
   content,
@@ -692,9 +820,6 @@ function TraceTerminalStream({
   timelineEvents: TimelineEvent[]
   isActive: boolean
 }) {
-  const terminalHost = "patriot@console"
-  const terminalCwd = "~/trace"
-
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
@@ -727,14 +852,7 @@ function TraceTerminalStream({
                 transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.16) }}
                 className="mb-3"
               >
-                <div className="flex items-start gap-3 text-[12px] leading-[1.5]">
-                  <div className="shrink-0 whitespace-nowrap text-white/42">
-                    <span className={cn("text-white/70", isTool && "text-[#ec3844]")}>{terminalHost}</span>
-                    <span className="text-white/28">:</span>
-                    <span className="text-white/38">{terminalCwd}</span>
-                    <span className={cn("text-white/28", isTool && "text-[#ec3844]/60")}>$</span>
-                  </div>
-
+                <div className="flex items-start justify-between gap-3 text-[12px] leading-[1.5]">
                   <div className={cn("min-w-0 flex-1 text-white/72", isTool && "text-[#ec3844]")}>
                     <span>{formatted.label}</span>
                     {isActive && isLatest ? <TerminalCursor /> : null}

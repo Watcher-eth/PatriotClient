@@ -73,6 +73,8 @@ export type RunRecord = {
   source: "web" | "telegram" | "api"
   workerId: string
   workerType: "kali_cloud" | "kali_field" | "kali_customer_edge"
+  model?: string
+  profile?: "recon" | "redteam"
   status: "queued" | "running" | "completed" | "failed" | "stopped"
   createdAt: string
   updatedAt: string
@@ -92,6 +94,23 @@ export type ArtifactRecord = {
   kind: "log" | "report" | "output" | "asset" | "finding" | "evidence"
   path: string
   createdAt: string
+}
+
+export type WorkerRecord = {
+  id: string
+  name: string
+  type: "kali_cloud" | "kali_field" | "kali_customer_edge"
+  platform: "kali"
+  runtime: Record<string, unknown>
+  capabilities: string[]
+  tailscaleIp?: string
+  labels?: string[]
+  artifactRoot?: string
+  status: "online" | "offline" | "busy"
+  claimedBy?: string
+  lastHeartbeatAt: string
+  createdAt: string
+  updatedAt: string
 }
 
 export type SessionRecord = {
@@ -180,6 +199,7 @@ export const patriotApi = {
   baseUrl: API_BASE,
   listRuns: () => request<{ runs: RunRecord[] }>("/v1/runs"),
   listSessions: () => request<{ sessions: SessionRecord[] }>("/v1/sessions"),
+  listWorkers: () => request<{ workers: WorkerRecord[] }>("/v1/workers"),
   createSession: (body: { title?: string; createdBy?: string; metadata?: Record<string, unknown> }) =>
     request<SessionRecord>("/v1/sessions", {
       method: "POST",
@@ -194,7 +214,7 @@ export const patriotApi = {
       content: string
       role?: "user" | "assistant" | "system"
       createRun?: boolean
-      run?: Partial<Pick<RunRecord, "source" | "mode" | "tier" | "safetyEnabled" | "createdBy">> & {
+      run?: Partial<Pick<RunRecord, "source" | "model" | "profile" | "mode" | "tier" | "safetyEnabled" | "createdBy">> & {
         workerId?: string
       }
     },

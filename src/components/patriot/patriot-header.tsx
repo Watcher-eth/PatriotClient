@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { ExternalLink, Settings } from "lucide-react"
@@ -5,6 +6,7 @@ import { cn } from "@/lib/utils"
 
 type PatriotHeaderProps = {
   active?: "console" | "sessions" | "reports"
+  settingsSlot?: ReactNode
 }
 
 const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: string; href: string }> = [
@@ -13,20 +15,20 @@ const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: st
   { id: "reports", label: "Reports", href: "/reports" },
 ]
 
-export function PatriotHeader({ active = "console" }: PatriotHeaderProps) {
+export function PatriotHeader({ active = "console", settingsSlot }: PatriotHeaderProps) {
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Image
             src="/DaedalusWhite.png"
             alt="Patriot logo"
-            width={24}
-            height={24}
+            width={20}
+            height={20}
             className="h-6 w-6 object-contain"
             priority
           />
-          <span className="text-sm font-semibold uppercase tracking-[0.24em]">Patriot</span>
+          <span className="text-lg font-semibold uppercase tracking-[0.24em]">Patriot</span>
         </div>
       </div>
 
@@ -61,9 +63,11 @@ export function PatriotHeader({ active = "console" }: PatriotHeaderProps) {
         >
           Active
         </button>
-        <button type="button" className="text-white/45 hover:text-white">
-          <Settings size={18} />
-        </button>
+        {settingsSlot ?? (
+          <button type="button" className="text-white/45 hover:text-white">
+            <Settings size={18} />
+          </button>
+        )}
       </div>
     </header>
   )

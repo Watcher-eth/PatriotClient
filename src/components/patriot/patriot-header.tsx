@@ -1,7 +1,19 @@
+import Link from "next/link"
 import Image from "next/image"
 import { ExternalLink, Settings } from "lucide-react"
+import { cn } from "@/lib/utils"
 
-export function PatriotHeader() {
+type PatriotHeaderProps = {
+  active?: "console" | "sessions" | "reports"
+}
+
+const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: string; href: string }> = [
+  { id: "console", label: "Operator console", href: "/" },
+  { id: "sessions", label: "Sessions", href: "/sessions" },
+  { id: "reports", label: "Reports", href: "/reports" },
+]
+
+export function PatriotHeader({ active = "console" }: PatriotHeaderProps) {
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#0a0d11] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
@@ -19,11 +31,22 @@ export function PatriotHeader() {
       </div>
 
       <nav className="flex items-center justify-center gap-6 px-6">
-        <span className="text-[11px] uppercase tracking-[0.24em] text-white/45">Operator console</span>
-        <span className="text-[11px] uppercase tracking-[0.24em] text-white/45">Sessions</span>
-        <span className="text-[11px] uppercase tracking-[0.24em] text-white/45">Reports</span>
+        {navItems.map((item) => (
+          <Link
+            key={item.id}
+            href={item.href}
+            className={cn(
+              "text-[11px] uppercase tracking-[0.24em] transition-colors",
+              item.id === active ? "text-white" : "text-white/45 hover:text-white",
+            )}
+          >
+            {item.label}
+          </Link>
+        ))}
         <a
-          href="#"
+          href="https://www.daedalus-industries.de"
+          target="_blank"
+          rel="noreferrer"
           className="flex items-center gap-1 text-[11px] uppercase tracking-[0.24em] text-white/45 hover:text-white"
         >
           Docs

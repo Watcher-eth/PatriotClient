@@ -459,7 +459,7 @@ export function PatriotDashboard() {
   return (
     <div className="relative h-dvh overflow-hidden bg-[#07090c] text-white industrial-grid">
       <PatriotIntro visible={showIntro} />
-      <PatriotHeader />
+      <PatriotHeader active="console" />
       <main className="grid h-[calc(100dvh-52px)] min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] overflow-hidden font-mono">
         <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r border-white/10 bg-[#090c10]">
           <div className="border-b border-white/10 px-4 py-4">

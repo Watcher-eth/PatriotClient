@@ -178,6 +178,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const patriotApi = {
   baseUrl: API_BASE,
+  listRuns: () => request<{ runs: RunRecord[] }>("/v1/runs"),
   listSessions: () => request<{ sessions: SessionRecord[] }>("/v1/sessions"),
   createSession: (body: { title?: string; createdBy?: string; metadata?: Record<string, unknown> }) =>
     request<SessionRecord>("/v1/sessions", {

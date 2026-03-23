@@ -80,7 +80,7 @@ function buildRunConfig(settings: OperatorRunSettings) {
     profile: settings.profile,
     mode: "execute" as const,
     tier,
-    safetyEnabled: !isRedteam,
+    safetyEnabled: false,
     createdBy: "operator",
     workerId: settings.workerId === "auto" ? undefined : settings.workerId,
   }
@@ -596,7 +596,7 @@ export function PatriotDashboard() {
               />
               <div className="flex items-center justify-between border-t border-white/10 px-3 py-2">
                 <span className="text-[10px] uppercase tracking-[0.18em] text-white/35">
-                  Execute / Recon / Safety on
+                  Execute / {runSettings.profile} / Safety off
                 </span>
                 <Button
                   type="button"
@@ -725,7 +725,7 @@ function RunSettingsMenu({
           </label>
 
           <label className="block">
-            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/38">Mode</div>
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/38">Profile</div>
             <select
               value={settings.profile}
               onChange={(event) => onProfileChange(event.target.value as OperatorRunProfile)}

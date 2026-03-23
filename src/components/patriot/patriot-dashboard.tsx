@@ -977,7 +977,7 @@ function TraceTerminalStream({
                 </div>
 
                 {formatted.facts.length > 0 ? (
-                  <div className="ml-[152px] mt-1 space-y-1 text-[11px] leading-5 text-white/52">
+                  <div className="mt-2 space-y-1 border-l border-white/8 pl-3 text-[11px] leading-5 text-white/58">
                     {formatted.facts.map((fact) => (
                       <motion.div
                         key={`${event.id}-${fact}`}

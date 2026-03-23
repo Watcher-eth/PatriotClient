@@ -119,12 +119,116 @@ function timelineTone(status?: TimelineEvent["status"]) {
   }
 }
 
-function formatTimelineStep(event: TimelineEvent) {
-  const segments = [event.title, event.body]
-    .map((segment) => segment.trim())
-    .filter(Boolean)
+function compactToolName(tool: string) {
+  return tool.split("__").filter(Boolean).at(-1) ?? tool
+}
 
-  return segments.join(" / ")
+function parseJsonRecord(value: string) {
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+function getNestedRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function getToolResultPayload(event: TimelineEvent) {
+  const eventData = getNestedRecord(event.data)
+  if (!eventData) return null
+
+  const directResponse = getNestedRecord(eventData.tool_response)
+  if (directResponse) return directResponse
+
+  if (Array.isArray(eventData.tool_response)) {
+    const first = eventData.tool_response[0]
+    const firstRecord = getNestedRecord(first)
+    if (typeof firstRecord?.text === "string") return parseJsonRecord(firstRecord.text)
+  }
+
+  return parseJsonRecord(event.body)
+}
+
+function getToolTarget(event: TimelineEvent, payload?: Record<string, unknown> | null) {
+  const eventData = getNestedRecord(event.data)
+  const toolInput = getNestedRecord(eventData?.tool_input)
+  const candidates = [
+    payload?.target,
+    toolInput?.target,
+    toolInput?.host,
+    toolInput?.domain,
+    toolInput?.url,
+    toolInput?.location,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim()
+  }
+
+  if (Array.isArray(toolInput?.search_query)) {
+    const first = getNestedRecord(toolInput.search_query[0])
+    if (typeof first?.q === "string" && first.q.trim()) return first.q.trim()
+  }
+
+  return null
+}
+
+function getToolFacts(payload: Record<string, unknown> | null) {
+  if (!payload) return []
+
+  const facts: string[] = []
+  const summary = getNestedRecord(payload.summary)
+
+  if (typeof payload.status === "string") facts.push(`Status: ${payload.status}`)
+  if (typeof summary?.coverage === "string") facts.push(`Coverage: ${summary.coverage}`)
+  if (typeof summary?.resolved_ips_count === "number") facts.push(`Resolved IPs: ${summary.resolved_ips_count}`)
+  if (Array.isArray(summary?.resolved_ips)) {
+    const ips = summary.resolved_ips.filter((item): item is string => typeof item === "string")
+    if (ips.length > 0) facts.push(`IPs: ${ips.join(", ")}`)
+  }
+  if (Array.isArray(summary?.tls_ports_probed)) {
+    const ports = summary.tls_ports_probed.map((item) => String(item))
+    facts.push(`TLS ports: ${ports.length > 0 ? ports.join(", ") : "none"}`)
+  }
+  if (typeof summary?.tls_subject === "string" && summary.tls_subject) facts.push(`TLS subject: ${summary.tls_subject}`)
+  if (typeof summary?.tls_issuer === "string" && summary.tls_issuer) facts.push(`TLS issuer: ${summary.tls_issuer}`)
+  if (Array.isArray(payload.key_facts)) {
+    for (const fact of payload.key_facts) {
+      if (typeof fact === "string" && fact.trim()) facts.push(fact.trim())
+    }
+  }
+  if (Array.isArray(summary?.evidence_gaps)) {
+    const gaps = summary.evidence_gaps.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    if (gaps.length > 0) facts.push(`Gaps: ${gaps.join(", ")}`)
+  }
+
+  return facts.slice(0, 5)
+}
+
+function formatTraceEvent(event: TimelineEvent) {
+  if (event.kind === "tool") {
+    const eventData = getNestedRecord(event.data)
+    const toolName = compactToolName(String(eventData?.tool ?? event.title.replace(/^Tool (started|finished):\s*/i, "")))
+    const payload = event.sourceEventType === "tool.result" ? getToolResultPayload(event) : null
+    const target = getToolTarget(event, payload)
+    const label = `${event.sourceEventType === "tool.intent" ? "Started" : "Finished"}: ${toolName}${target ? ` => ${target}` : ""}`
+    return {
+      label,
+      facts: event.sourceEventType === "tool.result" ? getToolFacts(payload) : [],
+    }
+  }
+
+  return {
+    label: [event.title, event.body].map((segment) => segment.trim()).filter(Boolean).join(" / "),
+    facts: [] as string[],
+  }
 }
 
 export function PatriotDashboard() {
@@ -333,10 +437,11 @@ export function PatriotDashboard() {
   })
 
   const traceState = useMemo(() => {
-    const latestEvent = timelineEvents.at(-1) ?? null
+    const visibleTimelineEvents = timelineEvents.filter((event) => event.kind !== "artifact")
+    const latestEvent = visibleTimelineEvents.at(-1) ?? null
     const triggerText =
       latestEvent
-        ? formatTimelineStep(latestEvent)
+        ? formatTraceEvent(latestEvent).label
         : selectedRun?.status === "running"
           ? "Agent is executing the current run"
           : selectedRun
@@ -346,7 +451,8 @@ export function PatriotDashboard() {
     return {
       latestEvent,
       triggerText,
-      hasTrace: Boolean(selectedRun) || timelineEvents.length > 0,
+      visibleTimelineEvents,
+      hasTrace: Boolean(selectedRun) || visibleTimelineEvents.length > 0,
     }
   }, [selectedRun, timelineEvents])
 
@@ -442,7 +548,7 @@ export function PatriotDashboard() {
                 {traceState.hasTrace ? (
                   <TraceStepsCard
                     run={selectedRun}
-                    timelineEvents={timelineEvents}
+                    timelineEvents={traceState.visibleTimelineEvents}
                     triggerText={traceState.triggerText}
                     isActive={selectedRun?.status === "running"}
                   />
@@ -531,7 +637,7 @@ export function PatriotDashboard() {
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             {activeTab === "summary" ? (
-              <SummaryPanel sessionState={sessionState} selectedRun={selectedRun} />
+              <SummaryPanel sessionState={sessionState} selectedRun={selectedRun} runCount={runs.length} />
             ) : null}
             {activeTab === "findings" ? (
               <FindingsPanel findings={sessionState?.report.findings ?? []} />
@@ -638,20 +744,32 @@ function TraceStepsCard({
               </StepsItem>
             ) : (
               timelineEvents.map((event) => (
-                <StepsItem
-                  key={event.id}
-                  className={cn(
-                    "border px-3 py-2 font-mono text-[12px] leading-5 text-white/64",
-                    timelineTone(event.status),
-                    event.id === timelineEvents.at(-1)?.id && "text-white/88",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-white/36">
-                    <span>{event.kind}</span>
-                    <span>{formatTime(event.ts)}</span>
-                  </div>
-                  <div className="mt-2 whitespace-pre-wrap">{formatTimelineStep(event)}</div>
-                </StepsItem>
+                (() => {
+                  const formatted = formatTraceEvent(event)
+                  return (
+                    <StepsItem
+                      key={event.id}
+                      className={cn(
+                        "border px-3 py-2 font-mono text-[12px] leading-5 text-white/64",
+                        timelineTone(event.status),
+                        event.id === timelineEvents.at(-1)?.id && "text-white/88",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-white/36">
+                        <span>{event.kind}</span>
+                        <span>{formatTime(event.ts)}</span>
+                      </div>
+                      <div className="mt-2 whitespace-pre-wrap">{formatted.label}</div>
+                      {formatted.facts.length > 0 ? (
+                        <div className="mt-2 space-y-1 text-[11px] leading-5 text-white/50">
+                          {formatted.facts.map((fact) => (
+                            <div key={fact}>{fact}</div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </StepsItem>
+                  )
+                })()
               ))
             )}
           </div>
@@ -676,9 +794,11 @@ function EmptyChatState({ copy }: { copy: string }) {
 function SummaryPanel({
   sessionState,
   selectedRun,
+  runCount,
 }: {
   sessionState: SessionStateResponse | null
   selectedRun: RunRecord | null
+  runCount: number
 }) {
   if (!sessionState) {
     return <EmptyPanel copy="Session summary will appear after the first run is linked to a session." />
@@ -687,13 +807,9 @@ function SummaryPanel({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-3">
-        <MetricCard label="Session" value={sessionState.session.title} detail={formatDateTime(sessionState.session.updatedAt)} />
-        <MetricCard label="Current run" value={selectedRun?.status ?? "idle"} detail={selectedRun ? selectedRun.id : "No linked run"} />
-        <MetricCard
-          label="Recommendations"
-          value={String(sessionState.report.stop_recommendations.length).padStart(2, "0")}
-          detail={sessionState.report.stop_recommendations[0] ?? "No stop recommendation yet."}
-        />
+        <MetricCard label="Runs" value={String(runCount).padStart(2, "0")} />
+        <MetricCard label="Findings" value={String(sessionState.report.findings.length).padStart(2, "0")} />
+        <MetricCard label="Assets" value={String(sessionState.report.assets.length).padStart(2, "0")} />
       </div>
 
       <div className="border border-white/10 bg-[#0d1116] p-4">
@@ -819,12 +935,12 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactRecord[] }) {
   )
 }
 
-function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+function MetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="border border-white/10 bg-[#0d1116] p-4">
       <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
       <div className="mt-3 text-sm uppercase tracking-[0.12em] text-white/88">{value}</div>
-      <div className="mt-3 text-[12px] leading-6 text-white/58">{detail}</div>
+      {detail ? <div className="mt-3 text-[12px] leading-6 text-white/58">{detail}</div> : null}
     </div>
   )
 }

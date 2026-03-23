@@ -233,10 +233,18 @@ function getToolFacts(payload: Record<string, unknown> | null) {
 function formatTraceEvent(event: TimelineEvent) {
   if (event.kind === "tool") {
     const eventData = getNestedRecord(event.data)
-    const toolName = compactToolName(String(eventData?.tool ?? event.title.replace(/^Tool (started|finished):\s*/i, "")))
+    const toolName = compactToolName(
+      String(eventData?.tool ?? eventData?.tool_name ?? event.title.replace(/^Tool (started|finished|running):\s*/i, ""))
+    )
     const payload = event.sourceEventType === "tool.result" ? getToolResultPayload(event) : null
     const target = getToolTarget(event, payload)
-    const label = `${event.sourceEventType === "tool.intent" ? "Started" : "Finished"}: ${toolName}${target ? ` => ${target}` : ""}`
+    const state =
+      event.sourceEventType === "tool.intent"
+        ? "Started"
+        : event.sourceEventType === "tool.progress"
+          ? "Running"
+          : "Finished"
+    const label = `${state}: ${toolName}${target ? ` => ${target}` : ""}`
     return {
       label,
       facts: event.sourceEventType === "tool.result" ? getToolFacts(payload) : [],
@@ -591,6 +599,12 @@ export function PatriotDashboard() {
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault()
+                    void submitMessage()
+                  }
+                }}
                 placeholder="Run a safe recon check against 127.0.0.1 and summarize the environment."
                 className="h-28 w-full resize-none bg-transparent px-3 py-3 text-[13px] leading-6 text-white outline-none placeholder:text-white/20"
               />

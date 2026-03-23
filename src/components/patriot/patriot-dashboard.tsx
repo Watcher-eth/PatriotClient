@@ -52,7 +52,7 @@ const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
 ]
 
 type OperatorRunProfile = "recon" | "redteam"
-type OperatorModel = "claude-sonnet-4.6" | "claude-opus-4.6"
+type OperatorModel = "claude-sonnet-4-6" | "claude-opus-4-6"
 type OperatorWorkerSelection = "auto" | string
 
 type OperatorRunSettings = {
@@ -62,8 +62,8 @@ type OperatorRunSettings = {
 }
 
 const modelOptions: Array<{ value: OperatorModel; label: string }> = [
-  { value: "claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
-  { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
 ]
 
 const profileOptions: Array<{ value: OperatorRunProfile; label: string }> = [
@@ -268,7 +268,7 @@ export function PatriotDashboard() {
   const [isStopping, setIsStopping] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
-    model: "claude-sonnet-4.6",
+    model: "claude-sonnet-4-6",
     profile: "recon",
     workerId: "auto",
   })

@@ -28,9 +28,13 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
   createTimelineEventSource,
+  hasRequiredCapabilities,
+  mergeTimelineEvents,
+  parseRequiredCapabilities,
   patriotApi,
   type ArtifactRecord,
   type AssetRecord,
+  type FieldSensorBootstrapInfo,
   type FindingRecord,
   type ReducedToolEvidence,
   type RunRecord,
@@ -93,19 +97,6 @@ function detectBrowserOs(): "macos" | "windows" | "linux" | "unknown" {
   if (value.includes("win")) return "windows"
   if (value.includes("linux")) return "linux"
   return "unknown"
-}
-
-function mergeTimelineEvents(current: TimelineEvent[], incoming: TimelineEvent[]) {
-  const map = new Map(current.map((item) => [item.id, item]))
-  for (const item of incoming) {
-    if (item.sourceEventType === "run.heartbeat") {
-      for (const [existingId, existing] of map.entries()) {
-        if (existing.sourceEventType === "run.heartbeat") map.delete(existingId)
-      }
-    }
-    map.set(item.id, item)
-  }
-  return [...map.values()].sort((a, b) => a.ts.localeCompare(b.ts))
 }
 
 function formatTime(value?: string) {
@@ -309,6 +300,19 @@ export function PatriotDashboard() {
     currentSession?.metadata && typeof currentSession.metadata.pending_local_prompt === "string"
       ? currentSession.metadata.pending_local_prompt
       : null
+  const pendingLocalRequiredCapabilities = parseRequiredCapabilities(
+    currentSession?.metadata?.pending_local_required_capabilities,
+  )
+  const pendingLocalBootstrap =
+    currentSession?.metadata &&
+    currentSession.metadata.pending_local_bootstrap &&
+    typeof currentSession.metadata.pending_local_bootstrap === "object"
+      ? (currentSession.metadata.pending_local_bootstrap as FieldSensorBootstrapInfo)
+      : null
+  const pendingLocalRecommendedClient =
+    currentSession?.metadata && typeof currentSession.metadata.pending_local_recommended_client === "string"
+      ? currentSession.metadata.pending_local_recommended_client
+      : null
   const preferredFieldWorkerId =
     currentSession?.metadata && typeof currentSession.metadata.field_sensor_worker_id === "string"
       ? currentSession.metadata.field_sensor_worker_id
@@ -322,6 +326,23 @@ export function PatriotDashboard() {
     ) ??
     workers.find((worker) => worker.type === "field_sensor" && worker.status === "online") ??
     null
+  const compatibleOnlineFieldWorker =
+    workers.find(
+      (worker) =>
+        worker.type === "field_sensor" &&
+        worker.status === "online" &&
+        (!preferredFieldWorkerId || worker.id === preferredFieldWorkerId) &&
+        hasRequiredCapabilities(worker, pendingLocalRequiredCapabilities),
+    ) ??
+    workers.find(
+      (worker) =>
+        worker.type === "field_sensor" &&
+        worker.status === "online" &&
+        hasRequiredCapabilities(worker, pendingLocalRequiredCapabilities),
+    ) ??
+    null
+  const hasFieldWorkerCapabilityMismatch =
+    Boolean(pendingLocalPrompt) && Boolean(onlineFieldWorker) && !compatibleOnlineFieldWorker
 
   const refreshSessions = useEffectEvent(async () => {
     const response = await patriotApi.listSessions()
@@ -537,7 +558,7 @@ export function PatriotDashboard() {
       const run = await patriotApi.resumePendingLocalRun(selectedSessionId, {
         ...buildRunConfig(runSettings),
         operatorOs: detectBrowserOs(),
-        workerId: onlineFieldWorker?.id ?? undefined,
+        workerId: compatibleOnlineFieldWorker?.id ?? undefined,
       })
       startTransition(() => {
         setSelectedRunId(run.id)
@@ -647,20 +668,79 @@ export function PatriotDashboard() {
             {pendingLocalPrompt ? (
               <div className="mb-3 border border-white/10 bg-white/[0.03] px-3 py-3">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
-                      {onlineFieldWorker ? "Field worker connected" : "Waiting for field worker"}
-                    </div>
-                    <div className="mt-1 text-[12px] leading-5 text-white/82">
-                      {onlineFieldWorker
-                        ? `${onlineFieldWorker.name} is online and ready to continue the pending local request.`
-                        : "Patriot is waiting for a local field worker to come online for this request."}
-                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
+                      {compatibleOnlineFieldWorker
+                        ? "Field worker connected"
+                        : hasFieldWorkerCapabilityMismatch
+                          ? "Field worker connected with limited capabilities"
+                          : "Waiting for field worker"}
+                      </div>
+                      <div className="mt-1 text-[12px] leading-5 text-white/82">
+                        {compatibleOnlineFieldWorker
+                          ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
+                          : hasFieldWorkerCapabilityMismatch
+                            ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
+                                pendingLocalRecommendedClient === "desktop"
+                                  ? "Open Patriot Desktop for full local recon."
+                                  : "Open a compatible native Patriot client."
+                              }`
+                            : "Patriot is waiting for a local field worker to come online for this request."}
+                      </div>
+                      {pendingLocalRequiredCapabilities.length > 0 ? (
+                        <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
+                          Requires: {pendingLocalRequiredCapabilities.join(", ")}
+                        </div>
+                      ) : null}
+                      {pendingLocalBootstrap ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.open(pendingLocalBootstrap.desktop.deepLink, "_self")}
+                            className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                          >
+                            Open Patriot Desktop
+                          </Button>
+                          {pendingLocalBootstrap.desktop.installUrl ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(pendingLocalBootstrap.desktop.installUrl, "_blank", "noopener,noreferrer")}
+                              className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                            >
+                              Get Desktop App
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.open(pendingLocalBootstrap.mobile.deepLink, "_self")}
+                            className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white/75 hover:bg-white/5"
+                          >
+                            Open Patriot Mobile
+                          </Button>
+                          {pendingLocalBootstrap.mobile.installUrl ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => window.open(pendingLocalBootstrap.mobile.installUrl, "_blank", "noopener,noreferrer")}
+                              className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white/75 hover:bg-white/5"
+                            >
+                              Get Mobile App
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     <div className="mt-2 text-[11px] leading-5 text-white/50">
                       {pendingLocalPrompt}
                     </div>
                   </div>
-                  {onlineFieldWorker ? (
+                  {compatibleOnlineFieldWorker ? (
                     <Button
                       type="button"
                       onClick={() => void continuePendingLocalRun()}

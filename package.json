@@ -6,8 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "desktop:dev": "electron electron/main.mjs",
+    "desktop:start": "electron electron/main.mjs",
+    "desktop:pack": "electron-builder"
   },
+  "main": "electron/main.mjs",
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.1",
     "@aws-sdk/client-s3": "^3.1014.0",
@@ -33,16 +37,35 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "build": {
+    "appId": "de.daedalus.patriot.desktop",
+    "productName": "Patriot Desktop",
+    "files": [
+      ".next/**/*",
+      "public/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "protocols": [
+      {
+        "name": "Patriot Desktop Pairing",
+        "schemes": ["patriot-desktop"]
+      }
+    ]
   },
   "ignoreScripts": [
     "sharp",
     "unrs-resolver"
   ],
   "trustedDependencies": [
+    "electron",
     "sharp",
     "unrs-resolver"
   ]

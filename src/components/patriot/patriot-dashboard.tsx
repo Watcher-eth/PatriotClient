@@ -313,6 +313,7 @@ export function PatriotDashboard() {
     currentSession?.metadata && typeof currentSession.metadata.pending_local_recommended_client === "string"
       ? currentSession.metadata.pending_local_recommended_client
       : null
+  const pendingLocalResumeRequired = currentSession?.metadata?.pending_local_resume_required === true
   const preferredFieldWorkerId =
     currentSession?.metadata && typeof currentSession.metadata.field_sensor_worker_id === "string"
       ? currentSession.metadata.field_sensor_worker_id
@@ -343,6 +344,12 @@ export function PatriotDashboard() {
     null
   const hasFieldWorkerCapabilityMismatch =
     Boolean(pendingLocalPrompt) && Boolean(onlineFieldWorker) && !compatibleOnlineFieldWorker
+  const shouldShowPendingLocalBanner =
+    Boolean(pendingLocalPrompt) &&
+    (Boolean(pendingLocalBootstrap) ||
+      hasFieldWorkerCapabilityMismatch ||
+      !onlineFieldWorker ||
+      (pendingLocalResumeRequired && Boolean(compatibleOnlineFieldWorker)))
 
   const refreshSessions = useEffectEvent(async () => {
     const response = await patriotApi.listSessions()
@@ -585,6 +592,7 @@ export function PatriotDashboard() {
       <PatriotIntro visible={showIntro} />
       <PatriotHeader
         active="console"
+        status={selectedRun?.status === "running" ? "active" : "inactive"}
         settingsSlot={
           <RunSettingsMenu
             settings={runSettings}
@@ -665,19 +673,19 @@ export function PatriotDashboard() {
           </div>
 
           <div className="sticky bottom-0 z-10 border-t border-white/10 bg-[#101010] px-4 py-4">
-            {pendingLocalPrompt ? (
+            {shouldShowPendingLocalBanner ? (
               <div className="mb-3 border border-white/10 bg-white/[0.03] px-3 py-3">
                 <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
-                      {compatibleOnlineFieldWorker
+                      {pendingLocalResumeRequired && compatibleOnlineFieldWorker
                         ? "Field worker connected"
                         : hasFieldWorkerCapabilityMismatch
                           ? "Field worker connected with limited capabilities"
                           : "Waiting for field worker"}
                       </div>
                       <div className="mt-1 text-[12px] leading-5 text-white/82">
-                        {compatibleOnlineFieldWorker
+                        {pendingLocalResumeRequired && compatibleOnlineFieldWorker
                           ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
                           : hasFieldWorkerCapabilityMismatch
                             ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
@@ -740,7 +748,7 @@ export function PatriotDashboard() {
                       {pendingLocalPrompt}
                     </div>
                   </div>
-                  {compatibleOnlineFieldWorker ? (
+                  {pendingLocalResumeRequired && compatibleOnlineFieldWorker ? (
                     <Button
                       type="button"
                       onClick={() => void continuePendingLocalRun()}

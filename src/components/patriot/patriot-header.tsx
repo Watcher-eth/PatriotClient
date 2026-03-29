@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 
 type PatriotHeaderProps = {
   active?: "console" | "sessions" | "reports"
+  status?: "active" | "inactive"
   settingsSlot?: ReactNode
 }
 
@@ -15,17 +16,19 @@ const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: st
   { id: "reports", label: "Reports", href: "/reports" },
 ]
 
-export function PatriotHeader({ active = "console", settingsSlot }: PatriotHeaderProps) {
+export function PatriotHeader({ active = "console", status = "inactive", settingsSlot }: PatriotHeaderProps) {
+  const isActive = status === "active"
+
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
-        <div className="flex items-center gap-3">
+        <div className="group flex items-center gap-3">
           <Image
             src="/DaedalusWhite.png"
             alt="Patriot logo"
             width={20}
             height={20}
-            className="h-6 w-6 object-contain"
+            className="h-6 w-6 object-contain transition-transform duration-700 ease-out motion-safe:group-hover:animate-spin"
             priority
           />
           <span className="text-lg font-semibold uppercase tracking-[0.24em]">Patriot</span>
@@ -57,12 +60,28 @@ export function PatriotHeader({ active = "console", settingsSlot }: PatriotHeade
       </nav>
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
-        <button
-          type="button"
-          className="rounded-sm border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.2em] text-white hover:bg-[#d72b38]"
+        <div
+          className={cn(
+            "inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em]",
+            isActive ? "text-[#d9ffe6]" : "text-[#ffb7bd]",
+          )}
         >
-          Active
-        </button>
+          <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+            <span
+              className={cn(
+                "absolute h-full w-full rounded-full opacity-80",
+                isActive ? "animate-ping bg-[#44d17a]/70" : "animate-ping bg-[#ec3844]/70",
+              )}
+            />
+            <span
+              className={cn(
+                "relative h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]",
+                isActive ? "bg-[#44d17a] text-[#44d17a]" : "bg-[#ec3844] text-[#ec3844]",
+              )}
+            />
+          </span>
+          <span>{isActive ? "Active" : "Inactive"}</span>
+        </div>
         {settingsSlot ?? (
           <button type="button" className="text-white/45 hover:text-white">
             <Settings size={18} />

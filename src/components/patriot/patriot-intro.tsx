@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { type CSSProperties, useEffect, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
 
 type PatriotIntroProps = {
@@ -31,6 +31,43 @@ const cornerLabels = [
     delay: 2.8,
   },
 ]
+
+function TypewriterLabel({
+  className,
+  delay,
+  label,
+}: {
+  className: string
+  delay: number
+  label: string
+}) {
+  const typingDuration = Math.min(Math.max(label.length * 0.04, 0.48), 0.72)
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: className.includes("bottom") ? 10 : -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.24, ease: "easeOut" }}
+      className={`absolute font-mono text-[11px] uppercase tracking-[0.24em] text-white/72 ${className}`}
+    >
+      <span
+        className="typewriter-label"
+        style={
+          {
+            width: `${label.length}ch`,
+            animation: [
+              `typewriter-reveal ${typingDuration}s steps(${label.length}, end) ${delay}s forwards`,
+              `typewriter-caret 0.75s step-end ${delay}s infinite`,
+              `typewriter-caret-hide 0.01s linear ${delay + typingDuration}s forwards`,
+            ].join(", "),
+          } as CSSProperties
+        }
+      >
+        {label}
+      </span>
+    </motion.div>
+  )
+}
 
 export function PatriotIntro({ visible }: PatriotIntroProps) {
   const [logoPath, setLogoPath] = useState("")
@@ -69,15 +106,12 @@ export function PatriotIntro({ visible }: PatriotIntroProps) {
           className="pointer-events-auto absolute inset-0 z-50 overflow-hidden bg-[#050505]"
         >
           {cornerLabels.map((item) => (
-            <motion.div
+            <TypewriterLabel
               key={item.id}
-              initial={{ opacity: 0, y: item.id.includes("bottom") ? 10 : -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: item.delay, duration: 0.45, ease: "easeOut" }}
-              className={`absolute font-mono text-[11px] uppercase tracking-[0.24em] text-white/72 ${item.className}`}
-            >
-              {item.label}
-            </motion.div>
+              className={item.className}
+              delay={item.delay}
+              label={item.label}
+            />
           ))}
 
           <div className="absolute inset-0 flex items-center justify-center">

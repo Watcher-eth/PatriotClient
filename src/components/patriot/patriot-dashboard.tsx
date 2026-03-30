@@ -10,6 +10,7 @@ import {
 import {
   AlertTriangle,
   Boxes,
+  CheckCircle2,
   Copy,
   FileCode2,
   FileStack,
@@ -37,6 +38,7 @@ import {
   type ArtifactRecord,
   type AssetRecord,
   type FieldSensorBootstrapInfo,
+  type FieldSensorBootstrapStatusRecord,
   type FindingRecord,
   type ReducedToolEvidence,
   type RunAssignmentRecord,
@@ -300,14 +302,16 @@ function isDuplicatePendingLocalSetupMessage({
   if (message.role === "user") return false
 
   const content = message.content
+  const hasSetupIntro = /this request needs a local field sensor/i.test(content)
   const hasSetupHeading = /setup options:/i.test(content)
+  const hasContinueSystemLine = /continuing pending local request via/i.test(content)
   const hasOriginalRequest = pendingLocalPrompt ? content.includes(`Original request: ${pendingLocalPrompt}`) : false
   const hasMinimumVersion = minimumPendingLocalVersion
     ? content.includes(`Minimum supported field worker version: ${minimumPendingLocalVersion}`)
     : false
   const hasCommand = pendingLocalCommand ? content.includes(pendingLocalCommand) : false
 
-  return hasSetupHeading || hasOriginalRequest || hasMinimumVersion || hasCommand
+  return hasSetupIntro || hasSetupHeading || hasContinueSystemLine || hasOriginalRequest || hasMinimumVersion || hasCommand
 }
 
 function formatTraceEvent(event: TimelineEvent) {
@@ -357,6 +361,8 @@ export function PatriotDashboard() {
   const [isStopping, setIsStopping] = useState(false)
   const [isResumingPendingLocalRun, setIsResumingPendingLocalRun] = useState(false)
   const [copiedSetupCommand, setCopiedSetupCommand] = useState(false)
+  const [setupInProgressToken, setSetupInProgressToken] = useState<string | null>(null)
+  const [bootstrapStatus, setBootstrapStatus] = useState<FieldSensorBootstrapStatusRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
     model: "claude-sonnet-4-6",
@@ -432,6 +438,7 @@ export function PatriotDashboard() {
         hasRequiredCapabilities(worker, pendingLocalRequiredCapabilities),
     ) ??
     null
+  const hasCompatibleReadyWorker = Boolean(compatibleOnlineFieldWorker)
   const hasFieldWorkerCapabilityMismatch =
     Boolean(pendingLocalPrompt) && Boolean(onlineFieldWorker) && !compatibleOnlineFieldWorker && !fieldWorkerNeedsUpgrade
   const shouldShowPendingLocalBanner =
@@ -442,6 +449,16 @@ export function PatriotDashboard() {
       (pendingLocalResumeRequired && Boolean(compatibleOnlineFieldWorker)))
   const macOsDesktopSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "desktop") ?? null
   const macOsScriptSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "script") ?? null
+  const effectiveBootstrapStatus =
+    pendingLocalBootstrap && bootstrapStatus?.token === pendingLocalBootstrap.token ? bootstrapStatus.status : null
+  const isSetupActive =
+    Boolean(pendingLocalBootstrap) &&
+    setupInProgressToken === pendingLocalBootstrap?.token &&
+    effectiveBootstrapStatus !== "enrolled" &&
+    effectiveBootstrapStatus !== "expired"
+  const isSetupReady =
+    effectiveBootstrapStatus === "enrolled" || hasCompatibleReadyWorker
+  const hasSetupFailed = effectiveBootstrapStatus === "expired"
 
   const syncSessionsList = async () => {
     const response = await patriotApi.listSessions()
@@ -501,6 +518,7 @@ export function PatriotDashboard() {
   })
 
   const openSetupOption = (option: FieldSensorBootstrapInfo["setup"][number]) => {
+    if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
     const target = option.installUrl ?? option.deepLink ?? option.scriptUrl
     if (!target) return
     window.open(target, option.deepLink && !option.installUrl ? "_self" : "_blank", "noopener,noreferrer")
@@ -508,6 +526,7 @@ export function PatriotDashboard() {
 
   const copySetupCommand = async (command: string) => {
     try {
+      if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
       await navigator.clipboard.writeText(command)
       setCopiedSetupCommand(true)
       window.setTimeout(() => setCopiedSetupCommand(false), 1800)
@@ -566,7 +585,11 @@ export function PatriotDashboard() {
   }, [deferredSessionId])
 
   useEffect(() => {
-    if (!pendingLocalBootstrap?.token) return
+    if (!pendingLocalBootstrap?.token) {
+      startTransition(() => setBootstrapStatus(null))
+      setSetupInProgressToken(null)
+      return
+    }
 
     let cancelled = false
 
@@ -574,9 +597,14 @@ export function PatriotDashboard() {
       try {
         const response = await patriotApi.getFieldSensorBootstrapStatus(pendingLocalBootstrap.token)
         if (cancelled) return
+        startTransition(() => setBootstrapStatus(response))
         if (response.status === "enrolled") {
+          setSetupInProgressToken(pendingLocalBootstrap.token)
           void refreshWorkers()
           if (selectedSessionId) void refreshSession(selectedSessionId)
+        }
+        if (response.status === "expired") {
+          setSetupInProgressToken(null)
         }
       } catch (err) {
         if (!cancelled) {
@@ -716,7 +744,7 @@ export function PatriotDashboard() {
     }
   }
 
-  const continuePendingLocalRun = async () => {
+  const continuePendingLocalRun = useEffectEvent(async () => {
     if (!selectedSessionId) return
     setIsResumingPendingLocalRun(true)
     setError(null)
@@ -736,7 +764,7 @@ export function PatriotDashboard() {
     } finally {
       setIsResumingPendingLocalRun(false)
     }
-  }
+  })
 
   const traceState = useMemo(() => {
     const visibleTimelineEvents = timelineEvents.filter((event) => event.kind !== "artifact")
@@ -757,18 +785,18 @@ export function PatriotDashboard() {
   )
   const visibleMessages = useMemo(
     () =>
-      messages.filter((message) =>
-        shouldShowPendingLocalBanner
-          ? !isDuplicatePendingLocalSetupMessage({
-              message,
-              pendingLocalPrompt,
-              minimumPendingLocalVersion,
-              pendingLocalCommand: pendingLocalBootstrap?.command,
-            })
-          : true,
+      messages.filter(
+        (message) =>
+          !isDuplicatePendingLocalSetupMessage({
+            message,
+            pendingLocalPrompt,
+            minimumPendingLocalVersion,
+            pendingLocalCommand: pendingLocalBootstrap?.command,
+          }),
       ),
-    [messages, minimumPendingLocalVersion, pendingLocalBootstrap?.command, pendingLocalPrompt, shouldShowPendingLocalBanner],
+    [messages, minimumPendingLocalVersion, pendingLocalBootstrap?.command, pendingLocalPrompt],
   )
+  const autoContinueKeyRef = useRef<string | null>(null)
   const previousRightRailStage = useRef<RightRailStage>(rightRailStage)
 
   useEffect(() => {
@@ -777,6 +805,28 @@ export function PatriotDashboard() {
     }
     previousRightRailStage.current = rightRailStage
   }, [rightRailStage])
+
+  useEffect(() => {
+    const autoContinueKey =
+      selectedSessionId && pendingLocalPrompt && compatibleOnlineFieldWorker
+        ? `${selectedSessionId}:${pendingLocalPrompt}:${compatibleOnlineFieldWorker.id}`
+        : null
+
+    if (!autoContinueKey) return
+    if (!isSetupReady || !shouldShowPendingLocalBanner || isResumingPendingLocalRun) return
+    if (autoContinueKeyRef.current === autoContinueKey) return
+
+    autoContinueKeyRef.current = autoContinueKey
+    void continuePendingLocalRun()
+  }, [
+    compatibleOnlineFieldWorker,
+    continuePendingLocalRun,
+    isResumingPendingLocalRun,
+    isSetupReady,
+    pendingLocalPrompt,
+    selectedSessionId,
+    shouldShowPendingLocalBanner,
+  ])
 
   return (
     <div className="relative h-dvh overflow-hidden bg-[#101010] text-white industrial-grid">
@@ -854,7 +904,6 @@ export function PatriotDashboard() {
 
                 {shouldShowPendingLocalBanner ? (
                   <PendingLocalRunCard
-                    pendingLocalResumeRequired={pendingLocalResumeRequired}
                     compatibleOnlineFieldWorker={compatibleOnlineFieldWorker}
                     fieldWorkerNeedsUpgrade={fieldWorkerNeedsUpgrade}
                     onlineFieldWorker={onlineFieldWorker}
@@ -864,11 +913,13 @@ export function PatriotDashboard() {
                     pendingLocalBootstrap={pendingLocalBootstrap}
                     macOsDesktopSetupOption={macOsDesktopSetupOption}
                     macOsScriptSetupOption={macOsScriptSetupOption}
+                    isSetupActive={isSetupActive}
+                    isSetupReady={isSetupReady}
+                    hasSetupFailed={hasSetupFailed}
                     copiedSetupCommand={copiedSetupCommand}
                     isResumingPendingLocalRun={isResumingPendingLocalRun}
                     onOpenSetupOption={openSetupOption}
                     onCopySetupCommand={copySetupCommand}
-                    onContinuePendingLocalRun={continuePendingLocalRun}
                   />
                 ) : null}
 
@@ -1151,7 +1202,6 @@ function AgentMessageCard({
 }
 
 function PendingLocalRunCard({
-  pendingLocalResumeRequired,
   compatibleOnlineFieldWorker,
   fieldWorkerNeedsUpgrade,
   onlineFieldWorker,
@@ -1161,13 +1211,14 @@ function PendingLocalRunCard({
   pendingLocalBootstrap,
   macOsDesktopSetupOption,
   macOsScriptSetupOption,
+  isSetupActive,
+  isSetupReady,
+  hasSetupFailed,
   copiedSetupCommand,
   isResumingPendingLocalRun,
   onOpenSetupOption,
   onCopySetupCommand,
-  onContinuePendingLocalRun,
 }: {
-  pendingLocalResumeRequired: boolean
   compatibleOnlineFieldWorker: WorkerRecord | null
   fieldWorkerNeedsUpgrade: boolean
   onlineFieldWorker: WorkerRecord | null
@@ -1177,14 +1228,26 @@ function PendingLocalRunCard({
   pendingLocalBootstrap: FieldSensorBootstrapInfo | null
   macOsDesktopSetupOption: FieldSensorBootstrapInfo["setup"][number] | null
   macOsScriptSetupOption: FieldSensorBootstrapInfo["setup"][number] | null
+  isSetupActive: boolean
+  isSetupReady: boolean
+  hasSetupFailed: boolean
   copiedSetupCommand: boolean
   isResumingPendingLocalRun: boolean
   onOpenSetupOption: (option: FieldSensorBootstrapInfo["setup"][number]) => void
   onCopySetupCommand: (command: string) => Promise<void>
-  onContinuePendingLocalRun: () => Promise<void>
 }) {
+  const isReadyForContinue = isSetupReady && Boolean(compatibleOnlineFieldWorker)
+  const setupStatus = isResumingPendingLocalRun
+    ? { tone: "text-[#f5d36b]", icon: LoaderCircle, label: "Continuing request", spin: true }
+    : isReadyForContinue
+      ? { tone: "text-[#8ff0b3]", icon: CheckCircle2, label: "Setup complete", spin: false }
+      : isSetupActive
+        ? { tone: "text-[#f5d36b]", icon: LoaderCircle, label: "Setup in progress", spin: true }
+        : hasSetupFailed
+          ? { tone: "text-[#ffb3b8]", icon: AlertTriangle, label: "Setup expired, retry required", spin: false }
+          : null
   const headline =
-    pendingLocalResumeRequired && compatibleOnlineFieldWorker
+    isReadyForContinue
       ? "Field worker connected"
       : fieldWorkerNeedsUpgrade
         ? "Field worker update required"
@@ -1192,8 +1255,8 @@ function PendingLocalRunCard({
           ? "Field worker connected with limited capabilities"
           : "Waiting for field worker"
   const body =
-    pendingLocalResumeRequired && compatibleOnlineFieldWorker
-      ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
+    isReadyForContinue
+      ? `${compatibleOnlineFieldWorker?.name ?? "Your field worker"} is online and ready to continue the pending local request.`
       : fieldWorkerNeedsUpgrade
         ? `${onlineFieldWorker?.name ?? "Your field worker"} is online, but it is running ${
             onlineFieldWorker?.adapter?.version ?? "an older version"
@@ -1222,7 +1285,13 @@ function PendingLocalRunCard({
               {onlineFieldWorker?.adapter?.version ? ` / Installed: ${onlineFieldWorker.adapter.version}` : ""}
             </div>
           ) : null}
-          {pendingLocalBootstrap?.os === "macos" ? (
+          {setupStatus ? (
+            <div className={cn("mt-3 inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.18em]", setupStatus.tone)}>
+              <setupStatus.icon size={14} className={setupStatus.spin ? "animate-spin" : undefined} />
+              {setupStatus.label}
+            </div>
+          ) : null}
+          {!isSetupActive && !isReadyForContinue && pendingLocalBootstrap?.os === "macos" ? (
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               {macOsDesktopSetupOption ? (
                 <div className="border border-white/10 bg-[#111111] p-3">
@@ -1277,7 +1346,7 @@ function PendingLocalRunCard({
                 </div>
               ) : null}
             </div>
-          ) : pendingLocalBootstrap ? (
+          ) : !isSetupActive && !isReadyForContinue && pendingLocalBootstrap ? (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {pendingLocalBootstrap.setup.map((option) => (
                 <Button
@@ -1294,17 +1363,6 @@ function PendingLocalRunCard({
             </div>
           ) : null}
         </div>
-        {pendingLocalResumeRequired && compatibleOnlineFieldWorker ? (
-          <Button
-            type="button"
-            onClick={() => void onContinuePendingLocalRun()}
-            disabled={isResumingPendingLocalRun}
-            className="rounded-none border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-white hover:bg-[#d82d39]"
-          >
-            {isResumingPendingLocalRun ? <LoaderCircle className="animate-spin" size={14} /> : <Play size={14} />}
-            Continue
-          </Button>
-        ) : null}
       </div>
     </article>
   )

@@ -6,9 +6,29 @@ import { join } from "node:path"
 const userDataDir = process.env.PATRIOT_DESKTOP_USER_DATA || join(homedir(), ".patriot", "desktop")
 const sensorHome = join(userDataDir, "field-sensor")
 const configPath = join(sensorHome, "config.json")
-const fieldWorkerVersion = "1.1.0"
+const fieldWorkerVersion = "1.2.0"
 
 mkdirSync(sensorHome, { recursive: true })
+
+function preferredPathValue() {
+  const parts = [
+    process.env.HOME ? join(process.env.HOME, ".bun", "bin") : "",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    process.env.PATH ?? "",
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(":"))
+    .map((value) => value.trim())
+    .filter(Boolean)
+  return [...new Set(parts)].join(":")
+}
+
+process.env.PATH = preferredPathValue()
 
 let sensorState = {
   paired: false,
@@ -59,7 +79,14 @@ function sendState() {
 
 function runCommand(bin, args) {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], shell: false })
+    const child = spawn(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+      env: {
+        ...process.env,
+        PATH: preferredPathValue(),
+      },
+    })
     let stdout = ""
     let stderr = ""
     child.stdout.on("data", (chunk) => {
@@ -270,6 +297,7 @@ async function execJob(job) {
       env: {
         ...process.env,
         ...(job.env ?? {}),
+        PATH: preferredPathValue(),
       },
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,

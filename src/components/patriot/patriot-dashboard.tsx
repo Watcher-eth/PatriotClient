@@ -189,6 +189,15 @@ function workerHealthTone(health?: WorkerRecord["adapter"] extends { health?: in
   }
 }
 
+function workerHealthLabel(health?: WorkerRecord["adapter"] extends { health?: infer T } ? T : string) {
+  switch (health) {
+    case "blocked":
+      return "UPDATE REQUIRED"
+    default:
+      return health ?? "unknown"
+  }
+}
+
 function parseJsonRecord(value: string) {
   try {
     const parsed = JSON.parse(value)
@@ -1479,7 +1488,7 @@ function SummaryPanel({
       </AnimatePresence>
 
       <motion.section layout className="space-y-3">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Worker fleet</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>
         {workers.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">
             {workers.map((worker) => (
@@ -1501,13 +1510,14 @@ function SummaryPanel({
                     {worker.adapter.diagnostics.slice(0, 2).join(" / ")}
                   </div>
                 ) : null}
-                {worker.adapter?.recommendedFixes?.length ? (
+                {worker.adapter?.recommendedFixes?.length &&
+                worker.adapter?.health !== "blocked" ? (
                   <div className="mt-2 text-[11px] leading-5 text-white/38">
                     Fix: {worker.adapter.recommendedFixes[0]}
                   </div>
                 ) : null}
                 <div className={cn("mt-3 inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.16em]", workerHealthTone(worker.adapter?.health))}>
-                  {worker.adapter?.health ?? worker.status}
+                  {workerHealthLabel(worker.adapter?.health)}
                 </div>
               </motion.article>
             ))}

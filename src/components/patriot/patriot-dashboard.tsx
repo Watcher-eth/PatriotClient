@@ -37,7 +37,6 @@ import {
   type ArtifactRecord,
   type AssetRecord,
   type FieldSensorBootstrapInfo,
-  type FieldSensorBootstrapStatusRecord,
   type FindingRecord,
   type ReducedToolEvidence,
   type RunAssignmentRecord,
@@ -287,6 +286,30 @@ function getToolFacts(payload: Record<string, unknown> | null) {
   return facts.slice(0, 5)
 }
 
+function isDuplicatePendingLocalSetupMessage({
+  message,
+  pendingLocalPrompt,
+  minimumPendingLocalVersion,
+  pendingLocalCommand,
+}: {
+  message: SessionMessageRecord
+  pendingLocalPrompt: string | null
+  minimumPendingLocalVersion?: string
+  pendingLocalCommand?: string
+}) {
+  if (message.role === "user") return false
+
+  const content = message.content
+  const hasSetupHeading = /setup options:/i.test(content)
+  const hasOriginalRequest = pendingLocalPrompt ? content.includes(`Original request: ${pendingLocalPrompt}`) : false
+  const hasMinimumVersion = minimumPendingLocalVersion
+    ? content.includes(`Minimum supported field worker version: ${minimumPendingLocalVersion}`)
+    : false
+  const hasCommand = pendingLocalCommand ? content.includes(pendingLocalCommand) : false
+
+  return hasSetupHeading || hasOriginalRequest || hasMinimumVersion || hasCommand
+}
+
 function formatTraceEvent(event: TimelineEvent) {
   if (event.kind === "tool") {
     const eventData = getNestedRecord(event.data)
@@ -334,8 +357,6 @@ export function PatriotDashboard() {
   const [isStopping, setIsStopping] = useState(false)
   const [isResumingPendingLocalRun, setIsResumingPendingLocalRun] = useState(false)
   const [copiedSetupCommand, setCopiedSetupCommand] = useState(false)
-  const [setupInProgressToken, setSetupInProgressToken] = useState<string | null>(null)
-  const [bootstrapStatus, setBootstrapStatus] = useState<FieldSensorBootstrapStatusRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
     model: "claude-sonnet-4-6",
@@ -421,14 +442,6 @@ export function PatriotDashboard() {
       (pendingLocalResumeRequired && Boolean(compatibleOnlineFieldWorker)))
   const macOsDesktopSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "desktop") ?? null
   const macOsScriptSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "script") ?? null
-  const effectiveBootstrapStatus =
-    pendingLocalBootstrap && bootstrapStatus?.token === pendingLocalBootstrap.token ? bootstrapStatus.status : "pending"
-  const isInstallingFieldWorker =
-    Boolean(pendingLocalBootstrap) &&
-    effectiveBootstrapStatus === "pending" &&
-    setupInProgressToken === pendingLocalBootstrap?.token
-  const isBootstrapInstalled =
-    Boolean(pendingLocalBootstrap) && effectiveBootstrapStatus === "enrolled"
 
   const syncSessionsList = async () => {
     const response = await patriotApi.listSessions()
@@ -488,7 +501,6 @@ export function PatriotDashboard() {
   })
 
   const openSetupOption = (option: FieldSensorBootstrapInfo["setup"][number]) => {
-    if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
     const target = option.installUrl ?? option.deepLink ?? option.scriptUrl
     if (!target) return
     window.open(target, option.deepLink && !option.installUrl ? "_self" : "_blank", "noopener,noreferrer")
@@ -496,7 +508,6 @@ export function PatriotDashboard() {
 
   const copySetupCommand = async (command: string) => {
     try {
-      if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
       await navigator.clipboard.writeText(command)
       setCopiedSetupCommand(true)
       window.setTimeout(() => setCopiedSetupCommand(false), 1800)
@@ -555,13 +566,7 @@ export function PatriotDashboard() {
   }, [deferredSessionId])
 
   useEffect(() => {
-    if (!pendingLocalBootstrap?.token) {
-      startTransition(() => {
-        setBootstrapStatus(null)
-        setSetupInProgressToken(null)
-      })
-      return
-    }
+    if (!pendingLocalBootstrap?.token) return
 
     let cancelled = false
 
@@ -569,9 +574,7 @@ export function PatriotDashboard() {
       try {
         const response = await patriotApi.getFieldSensorBootstrapStatus(pendingLocalBootstrap.token)
         if (cancelled) return
-        startTransition(() => setBootstrapStatus(response))
         if (response.status === "enrolled") {
-          setSetupInProgressToken(null)
           void refreshWorkers()
           if (selectedSessionId) void refreshSession(selectedSessionId)
         }
@@ -752,6 +755,20 @@ export function PatriotDashboard() {
     }),
     [artifacts.length, runs.length, sessionState?.report.assets.length, sessionState?.report.findings.length, sessionState?.report.tool_evidence.length],
   )
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((message) =>
+        shouldShowPendingLocalBanner
+          ? !isDuplicatePendingLocalSetupMessage({
+              message,
+              pendingLocalPrompt,
+              minimumPendingLocalVersion,
+              pendingLocalCommand: pendingLocalBootstrap?.command,
+            })
+          : true,
+      ),
+    [messages, minimumPendingLocalVersion, pendingLocalBootstrap?.command, pendingLocalPrompt, shouldShowPendingLocalBanner],
+  )
   const previousRightRailStage = useRef<RightRailStage>(rightRailStage)
 
   useEffect(() => {
@@ -814,11 +831,11 @@ export function PatriotDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
-                {messages.length === 0 && !traceState.hasTrace ? (
+                {visibleMessages.length === 0 && !traceState.hasTrace ? (
                   <EmptyChatState copy="Create a session and send a recon prompt to start collecting trace data and reports." />
                 ) : null}
 
-                {messages.map((message) =>
+                {visibleMessages.map((message) =>
                   message.role === "user" ? (
                     <OperatorMessageCard
                       key={message.id}
@@ -835,6 +852,26 @@ export function PatriotDashboard() {
                   ),
                 )}
 
+                {shouldShowPendingLocalBanner ? (
+                  <PendingLocalRunCard
+                    pendingLocalResumeRequired={pendingLocalResumeRequired}
+                    compatibleOnlineFieldWorker={compatibleOnlineFieldWorker}
+                    fieldWorkerNeedsUpgrade={fieldWorkerNeedsUpgrade}
+                    onlineFieldWorker={onlineFieldWorker}
+                    minimumPendingLocalVersion={minimumPendingLocalVersion}
+                    hasFieldWorkerCapabilityMismatch={hasFieldWorkerCapabilityMismatch}
+                    pendingLocalRecommendedClient={pendingLocalRecommendedClient}
+                    pendingLocalBootstrap={pendingLocalBootstrap}
+                    macOsDesktopSetupOption={macOsDesktopSetupOption}
+                    macOsScriptSetupOption={macOsScriptSetupOption}
+                    copiedSetupCommand={copiedSetupCommand}
+                    isResumingPendingLocalRun={isResumingPendingLocalRun}
+                    onOpenSetupOption={openSetupOption}
+                    onCopySetupCommand={copySetupCommand}
+                    onContinuePendingLocalRun={continuePendingLocalRun}
+                  />
+                ) : null}
+
                 {traceState.hasTrace ? (
                   <TraceTerminalStream
                     run={selectedRun}
@@ -847,163 +884,6 @@ export function PatriotDashboard() {
           </div>
 
           <div className="sticky bottom-0 z-10 border-t border-white/10 bg-[#101010] px-4 py-4">
-            {shouldShowPendingLocalBanner ? (
-              <div className="mb-3 border border-white/10 bg-white/[0.03] px-3 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
-                      {pendingLocalResumeRequired && compatibleOnlineFieldWorker
-                        ? "Field worker connected"
-                        : fieldWorkerNeedsUpgrade
-                          ? "Field worker update required"
-                        : hasFieldWorkerCapabilityMismatch
-                          ? "Field worker connected with limited capabilities"
-                          : "Waiting for field worker"}
-                    </div>
-                    <div className="mt-1 text-[12px] leading-5 text-white/82">
-                      {pendingLocalResumeRequired && compatibleOnlineFieldWorker
-                        ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
-                        : fieldWorkerNeedsUpgrade
-                          ? `${onlineFieldWorker?.name ?? "Your field worker"} is online, but it is running ${
-                              onlineFieldWorker?.adapter?.version ?? "an older version"
-                            }. Update it to ${minimumPendingLocalVersion} or later to continue local recon.`
-                        : hasFieldWorkerCapabilityMismatch
-                          ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
-                              pendingLocalRecommendedClient === "desktop"
-                                ? "Open Patriot Desktop for full local recon."
-                                : "Open a compatible native Patriot client."
-                            }`
-                          : "Patriot is waiting for a local field worker to come online for this request."}
-                    </div>
-                    {pendingLocalRequiredCapabilities.length > 0 ? (
-                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
-                        Requires: {pendingLocalRequiredCapabilities.join(", ")}
-                      </div>
-                    ) : null}
-                    {pendingLocalBootstrap ? (
-                      <div
-                        className={cn(
-                          "mt-2 text-[10px] uppercase tracking-[0.18em]",
-                          isBootstrapInstalled
-                            ? "text-white/70"
-                            : effectiveBootstrapStatus === "expired"
-                              ? "text-[#ffb3b8]"
-                              : isInstallingFieldWorker
-                                ? "text-[#f5d36b]"
-                                : "text-white/38",
-                        )}
-                      >
-                        {isBootstrapInstalled
-                          ? `Installed successfully via ${bootstrapStatus?.workerName ?? "field worker"}. Finalizing pairing in chat.`
-                          : effectiveBootstrapStatus === "expired"
-                            ? "Setup link expired. Start setup again to install the field worker."
-                            : isInstallingFieldWorker
-                              ? "Installing field worker. Waiting for enrollment confirmation..."
-                              : "Waiting for field worker installation to start."}
-                      </div>
-                    ) : null}
-                    {fieldWorkerNeedsUpgrade && minimumPendingLocalVersion ? (
-                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[#ffb3b8]">
-                        Minimum version: {minimumPendingLocalVersion}
-                        {onlineFieldWorker?.adapter?.version ? ` / Installed: ${onlineFieldWorker.adapter.version}` : ""}
-                      </div>
-                    ) : null}
-                    {pendingLocalBootstrap?.os === "macos" ? (
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        {macOsDesktopSetupOption ? (
-                          <div className="border border-white/10 bg-[#111111] p-3">
-                            <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">Installer</div>
-                            <div className="mt-1 text-[12px] text-white/88">{macOsDesktopSetupOption.label}</div>
-                            <div className="mt-1 text-[11px] leading-5 text-white/52">
-                              {setupOptionDescription(macOsDesktopSetupOption)}
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openSetupOption(macOsDesktopSetupOption)}
-                              className="mt-3 rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
-                            >
-                              {macOsDesktopSetupOption.installUrl ? "Open installer" : "Open desktop app"}
-                            </Button>
-                          </div>
-                        ) : null}
-
-                        {macOsScriptSetupOption ? (
-                          <div className="border border-white/10 bg-[#111111] p-3">
-                            <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">One-time script</div>
-                            <div className="mt-1 text-[12px] text-white/88">{macOsScriptSetupOption.label}</div>
-                            <div className="mt-1 text-[11px] leading-5 text-white/52">
-                              {setupOptionDescription(macOsScriptSetupOption)}
-                            </div>
-                            {macOsScriptSetupOption.command ? (
-                              <pre className="mt-3 overflow-x-auto border border-white/10 bg-black px-3 py-2 text-[11px] leading-5 text-white/76">
-                                <code>{macOsScriptSetupOption.command}</code>
-                              </pre>
-                            ) : null}
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              {macOsScriptSetupOption.command ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void copySetupCommand(macOsScriptSetupOption.command!)}
-                                  className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
-                                >
-                                  <Copy size={14} />
-                                  {copiedSetupCommand ? "Copied" : "Copy command"}
-                                </Button>
-                              ) : null}
-                              {macOsScriptSetupOption.scriptUrl ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openSetupOption(macOsScriptSetupOption)}
-                                  className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
-                                >
-                                  View script
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : pendingLocalBootstrap ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {pendingLocalBootstrap.setup.map((option) => (
-                          <Button
-                            key={`${option.kind}-${option.label}`}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openSetupOption(option)}
-                            className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
-                          >
-                            {option.label}
-                          </Button>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="mt-2 text-[11px] leading-5 text-white/50">
-                      {pendingLocalPrompt}
-                    </div>
-                  </div>
-                  {pendingLocalResumeRequired && compatibleOnlineFieldWorker ? (
-                    <Button
-                      type="button"
-                      onClick={() => void continuePendingLocalRun()}
-                      disabled={isResumingPendingLocalRun}
-                      className="rounded-none border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-white hover:bg-[#d82d39]"
-                    >
-                      {isResumingPendingLocalRun ? <LoaderCircle className="animate-spin" size={14} /> : <Play size={14} />}
-                      Continue
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-
             {selectedRun ? (
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.18em]", runStatusTone(selectedRun.status))}>
@@ -1266,6 +1146,166 @@ function AgentMessageCard({
           </motion.div>
         ))}
       </AnimatePresence>
+    </article>
+  )
+}
+
+function PendingLocalRunCard({
+  pendingLocalResumeRequired,
+  compatibleOnlineFieldWorker,
+  fieldWorkerNeedsUpgrade,
+  onlineFieldWorker,
+  minimumPendingLocalVersion,
+  hasFieldWorkerCapabilityMismatch,
+  pendingLocalRecommendedClient,
+  pendingLocalBootstrap,
+  macOsDesktopSetupOption,
+  macOsScriptSetupOption,
+  copiedSetupCommand,
+  isResumingPendingLocalRun,
+  onOpenSetupOption,
+  onCopySetupCommand,
+  onContinuePendingLocalRun,
+}: {
+  pendingLocalResumeRequired: boolean
+  compatibleOnlineFieldWorker: WorkerRecord | null
+  fieldWorkerNeedsUpgrade: boolean
+  onlineFieldWorker: WorkerRecord | null
+  minimumPendingLocalVersion?: string
+  hasFieldWorkerCapabilityMismatch: boolean
+  pendingLocalRecommendedClient: string | null
+  pendingLocalBootstrap: FieldSensorBootstrapInfo | null
+  macOsDesktopSetupOption: FieldSensorBootstrapInfo["setup"][number] | null
+  macOsScriptSetupOption: FieldSensorBootstrapInfo["setup"][number] | null
+  copiedSetupCommand: boolean
+  isResumingPendingLocalRun: boolean
+  onOpenSetupOption: (option: FieldSensorBootstrapInfo["setup"][number]) => void
+  onCopySetupCommand: (command: string) => Promise<void>
+  onContinuePendingLocalRun: () => Promise<void>
+}) {
+  const headline =
+    pendingLocalResumeRequired && compatibleOnlineFieldWorker
+      ? "Field worker connected"
+      : fieldWorkerNeedsUpgrade
+        ? "Field worker update required"
+        : hasFieldWorkerCapabilityMismatch
+          ? "Field worker connected with limited capabilities"
+          : "Waiting for field worker"
+  const body =
+    pendingLocalResumeRequired && compatibleOnlineFieldWorker
+      ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
+      : fieldWorkerNeedsUpgrade
+        ? `${onlineFieldWorker?.name ?? "Your field worker"} is online, but it is running ${
+            onlineFieldWorker?.adapter?.version ?? "an older version"
+          }. Update it to ${minimumPendingLocalVersion} or later to continue local recon.`
+        : hasFieldWorkerCapabilityMismatch
+          ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
+              pendingLocalRecommendedClient === "desktop"
+                ? "Open Patriot Desktop for full local recon."
+                : "Open a compatible native Patriot client."
+            }`
+          : "Patriot is waiting for a local field worker to come online for this request."
+
+  return (
+    <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
+      <div className="mb-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
+        <div>Patriot</div>
+        <div>Setup</div>
+      </div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">{headline}</div>
+          <div className="mt-1 text-[12px] leading-5 text-white/82">{body}</div>
+          {fieldWorkerNeedsUpgrade && minimumPendingLocalVersion ? (
+            <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[#ffb3b8]">
+              Minimum version: {minimumPendingLocalVersion}
+              {onlineFieldWorker?.adapter?.version ? ` / Installed: ${onlineFieldWorker.adapter.version}` : ""}
+            </div>
+          ) : null}
+          {pendingLocalBootstrap?.os === "macos" ? (
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {macOsDesktopSetupOption ? (
+                <div className="border border-white/10 bg-[#111111] p-3">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">Installer</div>
+                  <div className="mt-1 text-[12px] text-white/88">{macOsDesktopSetupOption.label}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-white/52">
+                    {setupOptionDescription(macOsDesktopSetupOption)}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onOpenSetupOption(macOsDesktopSetupOption)}
+                    className="mt-3 rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                  >
+                    {macOsDesktopSetupOption.installUrl ? "Open installer" : "Open desktop app"}
+                  </Button>
+                </div>
+              ) : null}
+              {macOsScriptSetupOption ? (
+                <div className="border border-white/10 bg-[#111111] p-3">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">One-time script</div>
+                  <div className="mt-1 text-[12px] text-white/88">{macOsScriptSetupOption.label}</div>
+                  <div className="mt-1 text-[11px] leading-5 text-white/52">
+                    {setupOptionDescription(macOsScriptSetupOption)}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {macOsScriptSetupOption.command ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void onCopySetupCommand(macOsScriptSetupOption.command!)}
+                        className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                      >
+                        <Copy size={14} />
+                        {copiedSetupCommand ? "Copied" : "Copy command"}
+                      </Button>
+                    ) : null}
+                    {macOsScriptSetupOption.scriptUrl ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onOpenSetupOption(macOsScriptSetupOption)}
+                        className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                      >
+                        View script
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : pendingLocalBootstrap ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {pendingLocalBootstrap.setup.map((option) => (
+                <Button
+                  key={`${option.kind}-${option.label}`}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenSetupOption(option)}
+                  className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {pendingLocalResumeRequired && compatibleOnlineFieldWorker ? (
+          <Button
+            type="button"
+            onClick={() => void onContinuePendingLocalRun()}
+            disabled={isResumingPendingLocalRun}
+            className="rounded-none border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-white hover:bg-[#d82d39]"
+          >
+            {isResumingPendingLocalRun ? <LoaderCircle className="animate-spin" size={14} /> : <Play size={14} />}
+            Continue
+          </Button>
+        ) : null}
+      </div>
     </article>
   )
 }

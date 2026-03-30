@@ -36,6 +36,7 @@ import {
   type ArtifactRecord,
   type AssetRecord,
   type FieldSensorBootstrapInfo,
+  type FieldSensorBootstrapStatusRecord,
   type FindingRecord,
   type ReducedToolEvidence,
   type RunAssignmentRecord,
@@ -322,6 +323,8 @@ export function PatriotDashboard() {
   const [isStopping, setIsStopping] = useState(false)
   const [isResumingPendingLocalRun, setIsResumingPendingLocalRun] = useState(false)
   const [copiedSetupCommand, setCopiedSetupCommand] = useState(false)
+  const [setupInProgressToken, setSetupInProgressToken] = useState<string | null>(null)
+  const [bootstrapStatus, setBootstrapStatus] = useState<FieldSensorBootstrapStatusRecord | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
     model: "claude-sonnet-4-6",
@@ -403,6 +406,14 @@ export function PatriotDashboard() {
       (pendingLocalResumeRequired && Boolean(compatibleOnlineFieldWorker)))
   const macOsDesktopSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "desktop") ?? null
   const macOsScriptSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "script") ?? null
+  const effectiveBootstrapStatus =
+    pendingLocalBootstrap && bootstrapStatus?.token === pendingLocalBootstrap.token ? bootstrapStatus.status : "pending"
+  const isInstallingFieldWorker =
+    Boolean(pendingLocalBootstrap) &&
+    effectiveBootstrapStatus === "pending" &&
+    setupInProgressToken === pendingLocalBootstrap?.token
+  const isBootstrapInstalled =
+    Boolean(pendingLocalBootstrap) && effectiveBootstrapStatus === "enrolled"
 
   const syncSessionsList = async () => {
     const response = await patriotApi.listSessions()
@@ -462,6 +473,7 @@ export function PatriotDashboard() {
   })
 
   const openSetupOption = (option: FieldSensorBootstrapInfo["setup"][number]) => {
+    if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
     const target = option.installUrl ?? option.deepLink ?? option.scriptUrl
     if (!target) return
     window.open(target, option.deepLink && !option.installUrl ? "_self" : "_blank", "noopener,noreferrer")
@@ -469,6 +481,7 @@ export function PatriotDashboard() {
 
   const copySetupCommand = async (command: string) => {
     try {
+      if (pendingLocalBootstrap) setSetupInProgressToken(pendingLocalBootstrap.token)
       await navigator.clipboard.writeText(command)
       setCopiedSetupCommand(true)
       window.setTimeout(() => setCopiedSetupCommand(false), 1800)
@@ -525,6 +538,45 @@ export function PatriotDashboard() {
     if (!deferredSessionId) return
     void refreshSession(deferredSessionId)
   }, [deferredSessionId])
+
+  useEffect(() => {
+    if (!pendingLocalBootstrap?.token) {
+      startTransition(() => {
+        setBootstrapStatus(null)
+        setSetupInProgressToken(null)
+      })
+      return
+    }
+
+    let cancelled = false
+
+    const refreshBootstrapStatus = async () => {
+      try {
+        const response = await patriotApi.getFieldSensorBootstrapStatus(pendingLocalBootstrap.token)
+        if (cancelled) return
+        startTransition(() => setBootstrapStatus(response))
+        if (response.status === "enrolled") {
+          setSetupInProgressToken(null)
+          void refreshWorkers()
+          if (selectedSessionId) void refreshSession(selectedSessionId)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+
+    void refreshBootstrapStatus()
+    const timer = window.setInterval(() => {
+      void refreshBootstrapStatus()
+    }, 2000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [pendingLocalBootstrap?.token, selectedSessionId])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -793,6 +845,28 @@ export function PatriotDashboard() {
                     {pendingLocalRequiredCapabilities.length > 0 ? (
                       <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
                         Requires: {pendingLocalRequiredCapabilities.join(", ")}
+                      </div>
+                    ) : null}
+                    {pendingLocalBootstrap ? (
+                      <div
+                        className={cn(
+                          "mt-2 text-[10px] uppercase tracking-[0.18em]",
+                          isBootstrapInstalled
+                            ? "text-white/70"
+                            : effectiveBootstrapStatus === "expired"
+                              ? "text-[#ffb3b8]"
+                              : isInstallingFieldWorker
+                                ? "text-[#f5d36b]"
+                                : "text-white/38",
+                        )}
+                      >
+                        {isBootstrapInstalled
+                          ? `Installed successfully via ${bootstrapStatus?.workerName ?? "field worker"}. Finalizing pairing in chat.`
+                          : effectiveBootstrapStatus === "expired"
+                            ? "Setup link expired. Start setup again to install the field worker."
+                            : isInstallingFieldWorker
+                              ? "Installing field worker. Waiting for enrollment confirmation..."
+                              : "Waiting for field worker installation to start."}
                       </div>
                     ) : null}
                     {fieldWorkerNeedsUpgrade && minimumPendingLocalVersion ? (

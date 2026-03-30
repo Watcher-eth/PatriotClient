@@ -343,6 +343,19 @@ export type FieldSensorBootstrapInfo = {
   setup: WorkerSetupOption[]
 }
 
+export type FieldSensorBootstrapStatus = "pending" | "enrolled" | "expired"
+
+export type FieldSensorBootstrapStatusRecord = {
+  token: string
+  status: FieldSensorBootstrapStatus
+  createdAt: string
+  expiresAt: string
+  usedAt?: string
+  workerId?: string
+  workerName?: string
+  workerVersion?: string
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "")
 }
@@ -462,6 +475,8 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    getFieldSensorBootstrapStatus: (token: string) =>
+      request<FieldSensorBootstrapStatusRecord>(resolvedBase, `/v1/field-sensors/bootstrap/${token}/status`),
   }
 }
 

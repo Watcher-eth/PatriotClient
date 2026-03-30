@@ -9,6 +9,7 @@ import {
 import {
   AlertTriangle,
   Boxes,
+  Copy,
   FileCode2,
   FileStack,
   FolderArchive,
@@ -37,6 +38,7 @@ import {
   type FieldSensorBootstrapInfo,
   type FindingRecord,
   type ReducedToolEvidence,
+  type RunAssignmentRecord,
   type RunRecord,
   type SessionMessageRecord,
   type SessionRecord,
@@ -146,6 +148,42 @@ function severityTone(severity: FindingRecord["severity"]) {
 
 function compactToolName(tool: string) {
   return tool.split("__").filter(Boolean).at(-1) ?? tool
+}
+
+function setupOptionDescription(option: FieldSensorBootstrapInfo["setup"][number]) {
+  if (option.kind === "desktop") return "Install the native Electron client and pair it with Patriot."
+  if (option.kind === "script") return "Run a one-time shell setup that installs and launches the field worker."
+  if (option.kind === "mobile") return "Install and pair the native mobile field worker."
+  return "Setup option"
+}
+
+function compareVersionStrings(left?: string, right?: string) {
+  if (!left && !right) return 0
+  if (!left) return -1
+  if (!right) return 1
+  const leftParts = left.split(".").map((segment) => Number(segment.match(/^\d+/)?.[0] ?? 0))
+  const rightParts = right.split(".").map((segment) => Number(segment.match(/^\d+/)?.[0] ?? 0))
+  const length = Math.max(leftParts.length, rightParts.length)
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0
+    const rightValue = rightParts[index] ?? 0
+    if (leftValue > rightValue) return 1
+    if (leftValue < rightValue) return -1
+  }
+  return 0
+}
+
+function workerHealthTone(health?: WorkerRecord["adapter"] extends { health?: infer T } ? T : string) {
+  switch (health) {
+    case "healthy":
+      return "border-white/10 bg-white/[0.04] text-white/72"
+    case "degraded":
+      return "border-[#ec3844]/35 bg-[#1a0d11] text-[#ffb3b8]"
+    case "blocked":
+      return "border-[#ec3844]/55 bg-[#220d12] text-[#ff8e98]"
+    default:
+      return "border-white/10 bg-white/[0.03] text-white/52"
+  }
 }
 
 function parseJsonRecord(value: string) {
@@ -275,6 +313,7 @@ export function PatriotDashboard() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
+  const [runAssignments, setRunAssignments] = useState<RunAssignmentRecord[]>([])
   const [draft, setDraft] = useState("")
   const [activeTab, setActiveTab] = useState<ViewTab>("summary")
   const [isLoading, setIsLoading] = useState(false)
@@ -282,6 +321,7 @@ export function PatriotDashboard() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isResumingPendingLocalRun, setIsResumingPendingLocalRun] = useState(false)
+  const [copiedSetupCommand, setCopiedSetupCommand] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [runSettings, setRunSettings] = useState<OperatorRunSettings>({
     model: "claude-sonnet-4-6",
@@ -314,6 +354,7 @@ export function PatriotDashboard() {
       ? currentSession.metadata.pending_local_recommended_client
       : null
   const pendingLocalResumeRequired = currentSession?.metadata?.pending_local_resume_required === true
+  const minimumPendingLocalVersion = pendingLocalBootstrap?.minimumVersion
   const preferredFieldWorkerId =
     currentSession?.metadata && typeof currentSession.metadata.field_sensor_worker_id === "string"
       ? currentSession.metadata.field_sensor_worker_id
@@ -327,56 +368,51 @@ export function PatriotDashboard() {
     ) ??
     workers.find((worker) => worker.type === "field_sensor" && worker.status === "online") ??
     null
+  const fieldWorkerNeedsUpgrade =
+    Boolean(onlineFieldWorker) &&
+    Boolean(minimumPendingLocalVersion) &&
+    compareVersionStrings(onlineFieldWorker?.adapter?.version, minimumPendingLocalVersion) < 0
   const compatibleOnlineFieldWorker =
     workers.find(
       (worker) =>
         worker.type === "field_sensor" &&
         worker.status === "online" &&
         (!preferredFieldWorkerId || worker.id === preferredFieldWorkerId) &&
+        worker.adapter?.health !== "blocked" &&
+        (!minimumPendingLocalVersion ||
+          compareVersionStrings(worker.adapter?.version, minimumPendingLocalVersion) >= 0) &&
         hasRequiredCapabilities(worker, pendingLocalRequiredCapabilities),
     ) ??
     workers.find(
       (worker) =>
         worker.type === "field_sensor" &&
         worker.status === "online" &&
+        worker.adapter?.health !== "blocked" &&
+        (!minimumPendingLocalVersion ||
+          compareVersionStrings(worker.adapter?.version, minimumPendingLocalVersion) >= 0) &&
         hasRequiredCapabilities(worker, pendingLocalRequiredCapabilities),
     ) ??
     null
   const hasFieldWorkerCapabilityMismatch =
-    Boolean(pendingLocalPrompt) && Boolean(onlineFieldWorker) && !compatibleOnlineFieldWorker
+    Boolean(pendingLocalPrompt) && Boolean(onlineFieldWorker) && !compatibleOnlineFieldWorker && !fieldWorkerNeedsUpgrade
   const shouldShowPendingLocalBanner =
     Boolean(pendingLocalPrompt) &&
     (Boolean(pendingLocalBootstrap) ||
       hasFieldWorkerCapabilityMismatch ||
       !onlineFieldWorker ||
       (pendingLocalResumeRequired && Boolean(compatibleOnlineFieldWorker)))
+  const macOsDesktopSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "desktop") ?? null
+  const macOsScriptSetupOption = pendingLocalBootstrap?.setup.find((option) => option.kind === "script") ?? null
 
-  const refreshSessions = useEffectEvent(async () => {
+  const syncSessionsList = async () => {
     const response = await patriotApi.listSessions()
     startTransition(() => {
       setSessions(response.sessions)
       if (!selectedSessionId && response.sessions.length > 0) setSelectedSessionId(response.sessions[0]!.id)
     })
-  })
+  }
 
-  const refreshWorkers = useEffectEvent(async () => {
-    try {
-      const response = await patriotApi.listWorkers()
-      startTransition(() => {
-        setWorkers(response.workers)
-        setRunSettings((current) => {
-          if (current.workerId === "auto") return current
-          return response.workers.some((worker) => worker.id === current.workerId)
-            ? current
-            : { ...current, workerId: "auto" }
-        })
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  })
-
-  const refreshSession = useEffectEvent(async (sessionId: string) => {
+  const loadSessionState = async (sessionId: string) => {
     setIsLoading(true)
     setError(null)
     try {
@@ -402,12 +438,62 @@ export function PatriotDashboard() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const refreshSessions = useEffectEvent(async () => {
+    await syncSessionsList()
+  })
+
+  const refreshWorkers = useEffectEvent(async () => {
+    try {
+      const response = await patriotApi.listWorkers()
+      startTransition(() => {
+        setWorkers(response.workers)
+        setRunSettings((current) => {
+          if (current.workerId === "auto") return current
+          return response.workers.some((worker) => worker.id === current.workerId)
+            ? current
+            : { ...current, workerId: "auto" }
+        })
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  const openSetupOption = (option: FieldSensorBootstrapInfo["setup"][number]) => {
+    const target = option.installUrl ?? option.deepLink ?? option.scriptUrl
+    if (!target) return
+    window.open(target, option.deepLink && !option.installUrl ? "_self" : "_blank", "noopener,noreferrer")
+  }
+
+  const copySetupCommand = async (command: string) => {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopiedSetupCommand(true)
+      window.setTimeout(() => setCopiedSetupCommand(false), 1800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy setup command.")
+    }
+  }
+
+  const refreshSession = useEffectEvent(async (sessionId: string) => {
+    await loadSessionState(sessionId)
   })
 
   const refreshRunArtifacts = useEffectEvent(async (runId: string) => {
     try {
       const response = await patriotApi.getRunArtifacts(runId)
       startTransition(() => setArtifacts(response.artifacts))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  const refreshRunAssignments = useEffectEvent(async (runId: string) => {
+    try {
+      const response = await patriotApi.getRunAssignments(runId)
+      startTransition(() => setRunAssignments(response.assignments))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -433,7 +519,7 @@ export function PatriotDashboard() {
     }, 10_000)
 
     return () => window.clearInterval(timer)
-  }, [refreshSession, refreshWorkers, selectedSessionId])
+  }, [selectedSessionId])
 
   useEffect(() => {
     if (!deferredSessionId) return
@@ -444,12 +530,14 @@ export function PatriotDashboard() {
     if (!selectedRunId) {
       setTimelineEvents([])
       setArtifacts([])
+      setRunAssignments([])
       return
     }
 
     let closed = false
     setTimelineEvents([])
     void refreshRunArtifacts(selectedRunId)
+    void refreshRunAssignments(selectedRunId)
 
     const source = createTimelineEventSource(selectedRunId)
     source.onmessage = (event) => {
@@ -461,6 +549,7 @@ export function PatriotDashboard() {
           const activeSessionId = deferredSessionId ?? selectedSessionId
           if (activeSessionId) void refreshSession(activeSessionId)
           void refreshRunArtifacts(selectedRunId)
+          void refreshRunAssignments(selectedRunId)
         }
       } catch {
         // Ignore malformed timeline frames.
@@ -474,7 +563,7 @@ export function PatriotDashboard() {
     }
   }, [deferredSessionId, selectedRunId, selectedSessionId])
 
-  const createSession = useEffectEvent(async () => {
+  const createSession = async () => {
     setIsCreatingSession(true)
     setError(null)
     try {
@@ -482,7 +571,7 @@ export function PatriotDashboard() {
         title: `Session ${new Date().toLocaleDateString()}`,
         createdBy: "operator",
       })
-      await refreshSessions()
+      await syncSessionsList()
       startTransition(() => {
         setSelectedSessionId(session.id)
         setMessages([])
@@ -495,9 +584,9 @@ export function PatriotDashboard() {
     } finally {
       setIsCreatingSession(false)
     }
-  })
+  }
 
-  const ensureSession = useEffectEvent(async () => {
+  const ensureSession = async () => {
     if (selectedSessionId) return selectedSessionId
 
     const session = await patriotApi.createSession({
@@ -505,14 +594,14 @@ export function PatriotDashboard() {
       createdBy: "operator",
     })
 
-    await refreshSessions()
+    await syncSessionsList()
     startTransition(() => {
       setSelectedSessionId(session.id)
     })
     return session.id
-  })
+  }
 
-  const submitMessage = useEffectEvent(async () => {
+  const submitMessage = async () => {
     const content = draft.trim()
     if (!content) return
 
@@ -536,28 +625,28 @@ export function PatriotDashboard() {
           setTimelineEvents([])
         })
       }
-      await refreshSession(sessionId)
+      await loadSessionState(sessionId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsSubmitting(false)
     }
-  })
+  }
 
-  const stopRun = useEffectEvent(async () => {
+  const stopRun = async () => {
     if (!selectedRunId) return
     setIsStopping(true)
     try {
       await patriotApi.stopRun(selectedRunId)
-      if (selectedSessionId) await refreshSession(selectedSessionId)
+      if (selectedSessionId) await loadSessionState(selectedSessionId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsStopping(false)
     }
-  })
+  }
 
-  const continuePendingLocalRun = useEffectEvent(async () => {
+  const continuePendingLocalRun = async () => {
     if (!selectedSessionId) return
     setIsResumingPendingLocalRun(true)
     setError(null)
@@ -571,13 +660,13 @@ export function PatriotDashboard() {
         setSelectedRunId(run.id)
         setTimelineEvents([])
       })
-      await refreshSession(selectedSessionId)
+      await loadSessionState(selectedSessionId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsResumingPendingLocalRun(false)
     }
-  })
+  }
 
   const traceState = useMemo(() => {
     const visibleTimelineEvents = timelineEvents.filter((event) => event.kind !== "artifact")
@@ -676,74 +765,119 @@ export function PatriotDashboard() {
             {shouldShowPendingLocalBanner ? (
               <div className="mb-3 border border-white/10 bg-white/[0.03] px-3 py-3">
                 <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">
                       {pendingLocalResumeRequired && compatibleOnlineFieldWorker
                         ? "Field worker connected"
+                        : fieldWorkerNeedsUpgrade
+                          ? "Field worker update required"
                         : hasFieldWorkerCapabilityMismatch
                           ? "Field worker connected with limited capabilities"
                           : "Waiting for field worker"}
+                    </div>
+                    <div className="mt-1 text-[12px] leading-5 text-white/82">
+                      {pendingLocalResumeRequired && compatibleOnlineFieldWorker
+                        ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
+                        : fieldWorkerNeedsUpgrade
+                          ? `${onlineFieldWorker?.name ?? "Your field worker"} is online, but it is running ${
+                              onlineFieldWorker?.adapter?.version ?? "an older version"
+                            }. Update it to ${minimumPendingLocalVersion} or later to continue local recon.`
+                        : hasFieldWorkerCapabilityMismatch
+                          ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
+                              pendingLocalRecommendedClient === "desktop"
+                                ? "Open Patriot Desktop for full local recon."
+                                : "Open a compatible native Patriot client."
+                            }`
+                          : "Patriot is waiting for a local field worker to come online for this request."}
+                    </div>
+                    {pendingLocalRequiredCapabilities.length > 0 ? (
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
+                        Requires: {pendingLocalRequiredCapabilities.join(", ")}
                       </div>
-                      <div className="mt-1 text-[12px] leading-5 text-white/82">
-                        {pendingLocalResumeRequired && compatibleOnlineFieldWorker
-                          ? `${compatibleOnlineFieldWorker.name} is online and ready to continue the pending local request.`
-                          : hasFieldWorkerCapabilityMismatch
-                            ? `${onlineFieldWorker?.name ?? "A field worker"} is online, but it does not advertise the required capabilities for this request. ${
-                                pendingLocalRecommendedClient === "desktop"
-                                  ? "Open Patriot Desktop for full local recon."
-                                  : "Open a compatible native Patriot client."
-                              }`
-                            : "Patriot is waiting for a local field worker to come online for this request."}
+                    ) : null}
+                    {fieldWorkerNeedsUpgrade && minimumPendingLocalVersion ? (
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[#ffb3b8]">
+                        Minimum version: {minimumPendingLocalVersion}
+                        {onlineFieldWorker?.adapter?.version ? ` / Installed: ${onlineFieldWorker.adapter.version}` : ""}
                       </div>
-                      {pendingLocalRequiredCapabilities.length > 0 ? (
-                        <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/38">
-                          Requires: {pendingLocalRequiredCapabilities.join(", ")}
-                        </div>
-                      ) : null}
-                      {pendingLocalBootstrap ? (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                    ) : null}
+                    {pendingLocalBootstrap?.os === "macos" ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        {macOsDesktopSetupOption ? (
+                          <div className="border border-white/10 bg-[#111111] p-3">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">Installer</div>
+                            <div className="mt-1 text-[12px] text-white/88">{macOsDesktopSetupOption.label}</div>
+                            <div className="mt-1 text-[11px] leading-5 text-white/52">
+                              {setupOptionDescription(macOsDesktopSetupOption)}
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openSetupOption(macOsDesktopSetupOption)}
+                              className="mt-3 rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                            >
+                              {macOsDesktopSetupOption.installUrl ? "Open installer" : "Open desktop app"}
+                            </Button>
+                          </div>
+                        ) : null}
+
+                        {macOsScriptSetupOption ? (
+                          <div className="border border-white/10 bg-[#111111] p-3">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">One-time script</div>
+                            <div className="mt-1 text-[12px] text-white/88">{macOsScriptSetupOption.label}</div>
+                            <div className="mt-1 text-[11px] leading-5 text-white/52">
+                              {setupOptionDescription(macOsScriptSetupOption)}
+                            </div>
+                            {macOsScriptSetupOption.command ? (
+                              <pre className="mt-3 overflow-x-auto border border-white/10 bg-black px-3 py-2 text-[11px] leading-5 text-white/76">
+                                <code>{macOsScriptSetupOption.command}</code>
+                              </pre>
+                            ) : null}
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              {macOsScriptSetupOption.command ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => void copySetupCommand(macOsScriptSetupOption.command!)}
+                                  className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                                >
+                                  <Copy size={14} />
+                                  {copiedSetupCommand ? "Copied" : "Copy command"}
+                                </Button>
+                              ) : null}
+                              {macOsScriptSetupOption.scriptUrl ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openSetupOption(macOsScriptSetupOption)}
+                                  className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
+                                >
+                                  View script
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : pendingLocalBootstrap ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {pendingLocalBootstrap.setup.map((option) => (
                           <Button
+                            key={`${option.kind}-${option.label}`}
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => window.open(pendingLocalBootstrap.desktop.deepLink, "_self")}
+                            onClick={() => openSetupOption(option)}
                             className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
                           >
-                            Open Patriot Desktop
+                            {option.label}
                           </Button>
-                          {pendingLocalBootstrap.desktop.installUrl ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => window.open(pendingLocalBootstrap.desktop.installUrl, "_blank", "noopener,noreferrer")}
-                              className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white hover:bg-white/5"
-                            >
-                              Get Desktop App
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(pendingLocalBootstrap.mobile.deepLink, "_self")}
-                            className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white/75 hover:bg-white/5"
-                          >
-                            Open Patriot Mobile
-                          </Button>
-                          {pendingLocalBootstrap.mobile.installUrl ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => window.open(pendingLocalBootstrap.mobile.installUrl, "_blank", "noopener,noreferrer")}
-                              className="rounded-none border-white/15 bg-transparent px-3 text-[10px] uppercase tracking-[0.18em] text-white/75 hover:bg-white/5"
-                            >
-                              Get Mobile App
-                            </Button>
-                          ) : null}
-                        </div>
-                      ) : null}
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="mt-2 text-[11px] leading-5 text-white/50">
                       {pendingLocalPrompt}
                     </div>
@@ -848,7 +982,12 @@ export function PatriotDashboard() {
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             {activeTab === "summary" ? (
-              <SummaryPanel sessionState={sessionState} selectedRun={selectedRun} runCount={runs.length} />
+              <SummaryPanel
+                sessionState={sessionState}
+                runCount={runs.length}
+                workers={workers}
+                runAssignments={runAssignments}
+              />
             ) : null}
             {activeTab === "findings" ? (
               <FindingsPanel findings={sessionState?.report.findings ?? []} />
@@ -952,7 +1091,7 @@ function RunSettingsMenu({
               </option>
               {workers.map((worker) => (
                 <option key={worker.id} value={worker.id} className="bg-[#101010] text-white">
-                  {worker.name} / {worker.status}
+                  {worker.name} / {worker.adapter?.kind ?? worker.type} / {worker.adapter?.health ?? worker.status}
                 </option>
               ))}
             </select>
@@ -1102,12 +1241,14 @@ function EmptyChatState({ copy }: { copy: string }) {
 
 function SummaryPanel({
   sessionState,
-  selectedRun,
   runCount,
+  workers,
+  runAssignments,
 }: {
   sessionState: SessionStateResponse | null
-  selectedRun: RunRecord | null
   runCount: number
+  workers: WorkerRecord[]
+  runAssignments: RunAssignmentRecord[]
 }) {
   if (!sessionState) {
     return <EmptyPanel copy="Session summary will appear after the first run is linked to a session." />
@@ -1121,6 +1262,58 @@ function SummaryPanel({
         <MetricCard label="Assets" value={String(sessionState.report.assets.length).padStart(2, "0")} />
       </div>
 
+      {runAssignments.length > 0 ? (
+        <div className="border border-white/10 bg-[#101010] p-4">
+          <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Execution phases</div>
+          <div className="space-y-2">
+            {runAssignments.map((assignment) => {
+              const worker = workers.find((item) => item.id === assignment.workerId)
+              return (
+                <div key={assignment.id} className="flex items-start justify-between gap-3 border border-white/10 px-3 py-3">
+                  <div className="min-w-0">
+                    <div className="text-[12px] uppercase tracking-[0.16em] text-white/82">
+                      {assignment.kind} / {assignment.capabilityFamily}
+                    </div>
+                    <div className="mt-1 text-[12px] text-white/58">
+                      {worker?.name ?? assignment.workerId}
+                      {assignment.adapterKind ? ` / ${assignment.adapterKind}` : ""}
+                    </div>
+                    {assignment.notes?.length ? (
+                      <div className="mt-2 space-y-1 text-[11px] leading-5 text-white/48">
+                        {assignment.notes.map((note) => (
+                          <div key={`${assignment.id}-${note}`}>- {note}</div>
+                        ))}
+                      </div>
+                    ) : null}
+                    {assignment.targetScope?.length ? (
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                        Targets: {assignment.targetScope.join(", ")}
+                      </div>
+                    ) : null}
+                    {assignment.error ? (
+                      <div className="mt-2 text-[11px] leading-5 text-[#ffadb3]">Reason: {assignment.error}</div>
+                    ) : null}
+                  </div>
+                  <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.16em]", runStatusTone(
+                    assignment.status === "completed"
+                      ? "completed"
+                      : assignment.status === "failed"
+                        ? "failed"
+                        : assignment.status === "running"
+                          ? "running"
+                          : assignment.status === "skipped"
+                            ? "stopped"
+                            : undefined,
+                  ))}>
+                    {assignment.status}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+
       <div className="border border-white/10 bg-[#101010] p-4">
         <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
           <Play size={14} />
@@ -1128,6 +1321,37 @@ function SummaryPanel({
         </div>
         <div className="whitespace-pre-wrap text-[13px] leading-7 text-white/82">
           {sessionState.report.narrative.summary}
+        </div>
+      </div>
+
+      <div className="border border-white/10 bg-[#101010] p-4">
+        <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Worker fleet</div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {workers.map((worker) => (
+            <article key={worker.id} className="border border-white/10 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] uppercase tracking-[0.16em] text-white/82">{worker.name}</div>
+                  <div className="mt-1 text-[11px] text-white/48">
+                    {worker.adapter?.kind ?? worker.type} / {worker.platform}
+                  </div>
+                </div>
+                <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.16em]", workerHealthTone(worker.adapter?.health))}>
+                  {worker.adapter?.health ?? worker.status}
+                </div>
+              </div>
+              {worker.adapter?.diagnostics?.length ? (
+                <div className="mt-3 text-[11px] leading-5 text-white/52">
+                  {worker.adapter.diagnostics.slice(0, 2).join(" / ")}
+                </div>
+              ) : null}
+              {worker.adapter?.recommendedFixes?.length ? (
+                <div className="mt-2 text-[11px] leading-5 text-white/38">
+                  Fix: {worker.adapter.recommendedFixes[0]}
+                </div>
+              ) : null}
+            </article>
+          ))}
         </div>
       </div>
     </div>

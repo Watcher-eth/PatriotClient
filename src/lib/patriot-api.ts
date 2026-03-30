@@ -11,8 +11,53 @@ export type WorkerCapability =
   | "nmap_scan"
   | "local_network_context"
 
+export type WorkerAdapterKind = "desktop" | "mobile" | "hardware" | "cloud"
+export type WorkerAdapterPlatformFamily = "desktop" | "mobile" | "hardware" | "cloud"
+export type WorkerSetupMethod = "native_pairing" | "deep_link" | "installer" | "script" | "remote_managed" | "bridge"
+export type WorkerAdapterHealth = "healthy" | "degraded" | "blocked"
+export type WorkerCapabilityState = "detected" | "available" | "missing" | "degraded" | "requires_permission"
+export type WorkerToolState = "available" | "missing" | "degraded" | "requires_permission"
+export type WorkerSetupOption = {
+  kind: "desktop" | "mobile" | "hardware" | "script"
+  label: string
+  deepLink?: string
+  installUrl?: string
+  scriptUrl?: string
+  command?: string
+}
+
+export type WorkerAdapterCapabilityRecord = {
+  capability: WorkerCapability
+  state: WorkerCapabilityState
+  evidence?: string[]
+  missingDependencies?: string[]
+  collectionModes?: Array<"passive" | "active" | "mixed">
+}
+
+export type WorkerToolInventoryRecord = {
+  tool: string
+  state: WorkerToolState
+  bin?: string
+  version?: string
+  evidence?: string[]
+  missingDependencies?: string[]
+}
+
+export type WorkerAdapterRecord = {
+  id: string
+  kind: WorkerAdapterKind
+  version?: string
+  platformFamily: WorkerAdapterPlatformFamily
+  setupMethods: WorkerSetupMethod[]
+  health: WorkerAdapterHealth
+  approvalMode: "operator_approval" | "policy_auto" | "per_adapter"
+  supportedEvidenceFamilies?: string[]
+  diagnostics?: string[]
+  recommendedFixes?: string[]
+}
+
 export type NativeClientKind = "desktop" | "mobile"
-export type OperatorClientOs = "macos" | "windows" | "linux" | "ios" | "unknown"
+export type OperatorClientOs = "macos" | "windows" | "linux" | "ios" | "android" | "unknown"
 
 export type NativeClientLinkInfo = {
   kind: NativeClientKind
@@ -37,11 +82,20 @@ export const MOBILE_FIELD_SENSOR_CAPABILITIES: WorkerCapability[] = [
 ]
 
 export function hasRequiredCapabilities(
-  worker: { capabilities: string[] | WorkerCapability[] },
+  worker: {
+    capabilities: string[] | WorkerCapability[]
+    capabilityInventory?: Array<{ capability: string; state: WorkerCapabilityState }>
+  },
   requiredCapabilities: string[] | WorkerCapability[],
 ) {
   if (requiredCapabilities.length === 0) return true
-  const set = new Map(worker.capabilities.map((item) => [String(item), true]))
+  const availableCapabilities =
+    worker.capabilityInventory?.length
+      ? worker.capabilityInventory
+          .filter((item) => item.state === "available" || item.state === "detected")
+          .map((item) => item.capability)
+      : worker.capabilities
+  const set = new Map(availableCapabilities.map((item) => [String(item), true]))
   return requiredCapabilities.every((capability) => set.has(String(capability)))
 }
 
@@ -107,6 +161,11 @@ export type ReducedToolEvidence = {
   stop_recommended: boolean
   coverage?: string
   evidence_gaps: string[]
+  source_worker_id?: string
+  adapter_id?: string
+  platform_family?: string
+  collection_mode?: string
+  coverage_gap_reason?: string
   observed_at: string
 }
 
@@ -160,9 +219,12 @@ export type WorkerRecord = {
   id: string
   name: string
   type: "kali_cloud" | "kali_field" | "kali_customer_edge" | "field_sensor"
-  platform: "kali" | "macos" | "windows" | "linux" | "ios"
+  platform: "kali" | "macos" | "windows" | "linux" | "ios" | "android" | "embedded"
   runtime: Record<string, unknown>
   capabilities: WorkerCapability[]
+  adapter?: WorkerAdapterRecord
+  capabilityInventory?: WorkerAdapterCapabilityRecord[]
+  toolInventory?: WorkerToolInventoryRecord[]
   tailscaleIp?: string
   labels?: string[]
   artifactRoot?: string
@@ -211,6 +273,18 @@ export type TimelineEvent = {
 export type StableRunReport = {
   schema_version: "patriot.report.v1"
   narrative: { summary: string; output: string }
+  assignments: Array<{
+    id: string
+    worker_id: string
+    worker_type: string
+    adapter_kind?: string
+    kind: string
+    capability_family: string
+    status: string
+    target_scope: string[]
+    notes: string[]
+    error?: string
+  }>
   assets: AssetRecord[]
   findings: FindingRecord[]
   tool_evidence: ReducedToolEvidence[]
@@ -235,16 +309,38 @@ export type SessionStateResponse = {
   runs: RunRecord[]
 }
 
+export type RunAssignmentRecord = {
+  id: string
+  runId: string
+  workerId: string
+  workerType: "kali_cloud" | "kali_field" | "kali_customer_edge" | "field_sensor"
+  adapterId?: string
+  adapterKind?: WorkerAdapterKind
+  kind: "discovery" | "enrichment" | "validation" | "followup"
+  capabilityFamily: string
+  status: "planned" | "queued" | "running" | "completed" | "failed" | "skipped"
+  targetScope: string[]
+  notes?: string[]
+  outputs?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  startedAt?: string
+  completedAt?: string
+  error?: string
+}
+
 export type FieldSensorBootstrapInfo = {
   token: string
   os: "macos" | "windows"
   command: string
   expiresAt: string
   scriptUrl: string
+  minimumVersion?: string
   recommendedClient: NativeClientKind
   requiredCapabilities: WorkerCapability[]
   desktop: NativeClientLinkInfo
   mobile: NativeClientLinkInfo
+  setup: WorkerSetupOption[]
 }
 
 function trimTrailingSlash(value: string) {
@@ -350,6 +446,8 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
     getRunArtifacts: (runId: string) => request<{ artifacts: ArtifactRecord[] }>(resolvedBase, `/v1/runs/${runId}/artifacts`),
     getRunReport: (runId: string) => request<StableRunReport>(resolvedBase, `/v1/runs/${runId}/report`),
     getRunTimeline: (runId: string) => request<{ events: TimelineEvent[] }>(resolvedBase, `/v1/runs/${runId}/timeline`),
+    getRunAssignments: (runId: string) =>
+      request<{ assignments: RunAssignmentRecord[] }>(resolvedBase, `/v1/runs/${runId}/assignments`),
     stopRun: (runId: string) =>
       request<RunRecord>(resolvedBase, `/v1/runs/${runId}/stop`, {
         method: "POST",

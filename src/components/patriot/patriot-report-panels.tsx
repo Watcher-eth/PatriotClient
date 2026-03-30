@@ -75,6 +75,46 @@ export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRu
         </div>
         <div className="whitespace-pre-wrap text-[13px] leading-7 text-white/82">{report.narrative.summary}</div>
       </div>
+
+      {report.assignments.length > 0 ? (
+        <div className="border border-white/10 bg-[#101010] p-4">
+          <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+            <FileStack size={14} />
+            Execution phases
+          </div>
+          <div className="space-y-3">
+            {report.assignments.map((assignment) => (
+              <article key={assignment.id} className="border border-white/10 bg-[#0d0d0d] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[12px] uppercase tracking-[0.16em] text-white/82">
+                    {assignment.kind} / {assignment.capability_family}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-white/45">{assignment.status}</div>
+                </div>
+                <div className="mt-2 text-[11px] leading-5 text-white/58">
+                  {assignment.worker_id}
+                  {assignment.adapter_kind ? ` / ${assignment.adapter_kind}` : ""}
+                </div>
+                {assignment.notes.length > 0 ? (
+                  <div className="mt-3 space-y-1 text-[12px] leading-6 text-white/68">
+                    {assignment.notes.map((note) => (
+                      <div key={`${assignment.id}-${note}`}>- {note}</div>
+                    ))}
+                  </div>
+                ) : null}
+                {assignment.target_scope.length > 0 ? (
+                  <div className="mt-3 text-[11px] uppercase tracking-[0.18em] text-white/38">
+                    Targets: {assignment.target_scope.join(", ")}
+                  </div>
+                ) : null}
+                {assignment.error ? (
+                  <div className="mt-3 text-[12px] leading-6 text-[#ffadb3]">Reason: {assignment.error}</div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

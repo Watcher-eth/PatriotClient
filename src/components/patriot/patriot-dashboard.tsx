@@ -4,6 +4,7 @@ import {
   useEffect,
   useEffectEvent,
   useMemo,
+  useRef,
   useState,
 } from "react"
 import {
@@ -23,7 +24,7 @@ import {
 } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 
-import { PatriotHeader } from "@/components/patriot/patriot-header"
+import { ActivityStatusBadge, PatriotHeader } from "@/components/patriot/patriot-header"
 import { PatriotIntro } from "@/components/patriot/patriot-intro"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -49,6 +50,7 @@ import {
 } from "@/lib/patriot-api"
 
 type ViewTab = "summary" | "findings" | "assets" | "evidence" | "artifacts"
+type RightRailStage = "pre" | "during" | "after"
 
 const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
   { id: "summary", label: "Summary", icon: FileStack },
@@ -339,6 +341,10 @@ export function PatriotDashboard() {
     runs.find((run) => run.id === currentSession?.currentRunId) ??
     runs[0] ??
     null
+  const isSelectedRunLive = selectedRun?.status === "queued" || selectedRun?.status === "running"
+  const isSelectedRunConcluded =
+    selectedRun?.status === "completed" || selectedRun?.status === "failed" || selectedRun?.status === "stopped"
+  const rightRailStage: RightRailStage = selectedRun ? (isSelectedRunConcluded ? "after" : "during") : "pre"
   const pendingLocalPrompt =
     currentSession?.metadata && typeof currentSession.metadata.pending_local_prompt === "string"
       ? currentSession.metadata.pending_local_prompt
@@ -727,13 +733,31 @@ export function PatriotDashboard() {
       hasTrace: Boolean(selectedRun) || visibleTimelineEvents.length > 0,
     }
   }, [selectedRun, timelineEvents])
+  const tabCounts = useMemo<Record<ViewTab, number>>(
+    () => ({
+      summary: runs.length,
+      findings: sessionState?.report.findings.length ?? 0,
+      assets: sessionState?.report.assets.length ?? 0,
+      evidence: sessionState?.report.tool_evidence.length ?? 0,
+      artifacts: artifacts.length,
+    }),
+    [artifacts.length, runs.length, sessionState?.report.assets.length, sessionState?.report.findings.length, sessionState?.report.tool_evidence.length],
+  )
+  const previousRightRailStage = useRef<RightRailStage>(rightRailStage)
+
+  useEffect(() => {
+    if (previousRightRailStage.current === "during" && rightRailStage === "after") {
+      startTransition(() => setActiveTab("summary"))
+    }
+    previousRightRailStage.current = rightRailStage
+  }, [rightRailStage])
 
   return (
     <div className="relative h-dvh overflow-hidden bg-[#101010] text-white industrial-grid">
       <PatriotIntro visible={showIntro} />
       <PatriotHeader
         active="console"
-        status={selectedRun?.status === "running" ? "active" : "inactive"}
+        status={isSelectedRunLive ? "active" : "inactive"}
         settingsSlot={
           <RunSettingsMenu
             settings={runSettings}
@@ -1039,14 +1063,24 @@ export function PatriotDashboard() {
                       type="button"
                       onClick={() => setActiveTab(tab.id)}
                       className={cn(
-                        "flex items-center gap-2 border px-3 py-1.5 text-[11px] uppercase tracking-[0.18em]",
+                        "flex min-w-[124px] items-center justify-between gap-3 border px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] transition-colors",
                         activeTab === tab.id
                           ? "border-[#ec3844] bg-[#190d11] text-white"
                           : "border-white/10 bg-[#101010] text-white/55 hover:text-white",
                       )}
                     >
-                      <Icon size={14} />
-                      {tab.label}
+                      <span className="flex items-center gap-2">
+                        <Icon size={14} />
+                        {tab.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "min-w-5 text-right text-[10px] tracking-[0.18em]",
+                          activeTab === tab.id ? "text-[#ffb7bd]" : "text-white/36",
+                        )}
+                      >
+                        {String(tabCounts[tab.id]).padStart(2, "0")}
+                      </span>
                     </button>
                   )
                 })}
@@ -1055,26 +1089,38 @@ export function PatriotDashboard() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            {activeTab === "summary" ? (
-              <SummaryPanel
-                sessionState={sessionState}
-                runCount={runs.length}
-                workers={workers}
-                runAssignments={runAssignments}
-              />
-            ) : null}
-            {activeTab === "findings" ? (
-              <FindingsPanel findings={sessionState?.report.findings ?? []} />
-            ) : null}
-            {activeTab === "assets" ? (
-              <AssetsPanel assets={sessionState?.report.assets ?? []} />
-            ) : null}
-            {activeTab === "evidence" ? (
-              <EvidencePanel evidence={sessionState?.report.tool_evidence ?? []} />
-            ) : null}
-            {activeTab === "artifacts" ? (
-              <ArtifactsPanel artifacts={artifacts} />
-            ) : null}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={`${activeTab}-${rightRailStage}`}
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="h-full"
+              >
+                {activeTab === "summary" ? (
+                  <SummaryPanel
+                    sessionState={sessionState}
+                    workers={workers}
+                    runAssignments={runAssignments}
+                    selectedRun={selectedRun}
+                    rightRailStage={rightRailStage}
+                  />
+                ) : null}
+                {activeTab === "findings" ? (
+                  <FindingsPanel findings={sessionState?.report.findings ?? []} />
+                ) : null}
+                {activeTab === "assets" ? (
+                  <AssetsPanel assets={sessionState?.report.assets ?? []} />
+                ) : null}
+                {activeTab === "evidence" ? (
+                  <EvidencePanel evidence={sessionState?.report.tool_evidence ?? []} />
+                ) : null}
+                {activeTab === "artifacts" ? (
+                  <ArtifactsPanel artifacts={artifacts} />
+                ) : null}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </section>
       </main>
@@ -1315,38 +1361,60 @@ function EmptyChatState({ copy }: { copy: string }) {
 
 function SummaryPanel({
   sessionState,
-  runCount,
   workers,
   runAssignments,
+  selectedRun,
+  rightRailStage,
 }: {
   sessionState: SessionStateResponse | null
-  runCount: number
   workers: WorkerRecord[]
   runAssignments: RunAssignmentRecord[]
+  selectedRun: RunRecord | null
+  rightRailStage: RightRailStage
 }) {
-  if (!sessionState) {
-    return <EmptyPanel copy="Session summary will appear after the first run is linked to a session." />
-  }
+  const orderedAssignments = useMemo(
+    () =>
+      runAssignments.toSorted((left, right) => {
+        const leftAnchor = left.startedAt ?? left.createdAt
+        const rightAnchor = right.startedAt ?? right.createdAt
+        if (leftAnchor !== rightAnchor) return leftAnchor.localeCompare(rightAnchor)
+        return left.createdAt.localeCompare(right.createdAt)
+      }),
+    [runAssignments],
+  )
+  const activeWorkerIds = useMemo(() => {
+    if (rightRailStage !== "during") return new Set<string>()
+    return new Set(
+      runAssignments
+        .filter((assignment) => assignment.status === "queued" || assignment.status === "running")
+        .map((assignment) => assignment.workerId),
+    )
+  }, [rightRailStage, runAssignments])
+  const narrative = sessionState?.report.narrative.summary?.trim() ?? ""
+  const hasNarrative = narrative.length > 0
+  const shouldShowNarrative =
+    (selectedRun?.status === "completed" || selectedRun?.status === "failed") && hasNarrative
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <MetricCard label="Runs" value={String(runCount).padStart(2, "0")} />
-        <MetricCard label="Findings" value={String(sessionState.report.findings.length).padStart(2, "0")} />
-        <MetricCard label="Assets" value={String(sessionState.report.assets.length).padStart(2, "0")} />
-      </div>
-
-      {runAssignments.length > 0 ? (
-        <div className="border border-white/10 bg-[#101010] p-4">
-          <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Execution phases</div>
+    <div className="space-y-6">
+      <motion.section layout className="space-y-3">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Execution phases</div>
+        {orderedAssignments.length > 0 ? (
           <div className="space-y-2">
-            {runAssignments.map((assignment) => {
+            {orderedAssignments.map((assignment, index) => {
               const worker = workers.find((item) => item.id === assignment.workerId)
               return (
-                <div key={assignment.id} className="flex items-start justify-between gap-3 border border-white/10 px-3 py-3">
+                <motion.div
+                  key={assignment.id}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-start justify-between gap-3 border border-white/10 px-3 py-3"
+                >
                   <div className="min-w-0">
-                    <div className="text-[12px] uppercase tracking-[0.16em] text-white/82">
-                      {assignment.kind} / {assignment.capabilityFamily}
+                    <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.16em] text-white/82">
+                      <span className="text-white/35">{String(index + 1).padStart(2, "0")}</span>
+                      <span>{assignment.kind} / {assignment.capabilityFamily}</span>
                     </div>
                     <div className="mt-1 text-[12px] text-white/58">
                       {worker?.name ?? assignment.workerId}
@@ -1381,53 +1449,73 @@ function SummaryPanel({
                   ))}>
                     {assignment.status}
                   </div>
-                </div>
+                </motion.div>
               )
             })}
           </div>
-        </div>
-      ) : null}
+        ) : (
+          <EmptyPanel copy="Execution phases will populate in the order the run schedules them." />
+        )}
+      </motion.section>
 
-      <div className="border border-white/10 bg-[#101010] p-4">
-        <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
-          <Play size={14} />
-          Reduced narrative
-        </div>
-        <div className="whitespace-pre-wrap text-[13px] leading-7 text-white/82">
-          {sessionState.report.narrative.summary}
-        </div>
-      </div>
+      <AnimatePresence initial={false} mode="wait">
+        {rightRailStage === "after" && shouldShowNarrative ? (
+          <motion.section
+            key="narrative-ready"
+            layout
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            className="space-y-3"
+          >
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+              <Play size={14} />
+              Summary narrative
+            </div>
+            <div className="whitespace-pre-wrap text-[13px] leading-7 text-white/82">{narrative}</div>
+          </motion.section>
+        ) : null}
+      </AnimatePresence>
 
-      <div className="border border-white/10 bg-[#101010] p-4">
-        <div className="mb-3 text-[11px] uppercase tracking-[0.18em] text-white/45">Worker fleet</div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {workers.map((worker) => (
-            <article key={worker.id} className="border border-white/10 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-[12px] uppercase tracking-[0.16em] text-white/82">{worker.name}</div>
-                  <div className="mt-1 text-[11px] text-white/48">
-                    {worker.adapter?.kind ?? worker.type} / {worker.platform}
+      <motion.section layout className="space-y-3">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Worker fleet</div>
+        {workers.length > 0 ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {workers.map((worker) => (
+              <motion.article key={worker.id} layout className="border border-white/10 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[12px] uppercase tracking-[0.16em] text-white/82">{worker.name}</div>
+                    <div className="mt-1 text-[11px] text-white/48">
+                      {worker.adapter?.kind ?? worker.type} / {worker.platform}
+                    </div>
                   </div>
+                  <ActivityStatusBadge
+                    status={activeWorkerIds.has(worker.id) ? "active" : "inactive"}
+                    className="shrink-0"
+                  />
                 </div>
-                <div className={cn("border px-2 py-1 text-[10px] uppercase tracking-[0.16em]", workerHealthTone(worker.adapter?.health))}>
+                {worker.adapter?.diagnostics?.length ? (
+                  <div className="mt-3 text-[11px] leading-5 text-white/52">
+                    {worker.adapter.diagnostics.slice(0, 2).join(" / ")}
+                  </div>
+                ) : null}
+                {worker.adapter?.recommendedFixes?.length ? (
+                  <div className="mt-2 text-[11px] leading-5 text-white/38">
+                    Fix: {worker.adapter.recommendedFixes[0]}
+                  </div>
+                ) : null}
+                <div className={cn("mt-3 inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.16em]", workerHealthTone(worker.adapter?.health))}>
                   {worker.adapter?.health ?? worker.status}
                 </div>
-              </div>
-              {worker.adapter?.diagnostics?.length ? (
-                <div className="mt-3 text-[11px] leading-5 text-white/52">
-                  {worker.adapter.diagnostics.slice(0, 2).join(" / ")}
-                </div>
-              ) : null}
-              {worker.adapter?.recommendedFixes?.length ? (
-                <div className="mt-2 text-[11px] leading-5 text-white/38">
-                  Fix: {worker.adapter.recommendedFixes[0]}
-                </div>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      </div>
+              </motion.article>
+            ))}
+          </div>
+        ) : (
+          <EmptyPanel copy="Worker inventory will appear once Patriot can see connected workers." />
+        )}
+      </motion.section>
     </div>
   )
 }
@@ -1538,16 +1626,6 @@ function ArtifactsPanel({ artifacts }: { artifacts: ArtifactRecord[] }) {
           <div className="mt-4 break-all text-[12px] leading-6 text-white/65">{artifact.path}</div>
         </article>
       ))}
-    </div>
-  )
-}
-
-function MetricCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <div className="border border-white/10 bg-[#101010] p-4">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
-      <div className="mt-3 text-sm uppercase tracking-[0.12em] text-white/88">{value}</div>
-      {detail ? <div className="mt-3 text-[12px] leading-6 text-white/58">{detail}</div> : null}
     </div>
   )
 }

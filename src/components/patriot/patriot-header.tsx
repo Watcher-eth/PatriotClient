@@ -16,9 +16,47 @@ const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: st
   { id: "reports", label: "Reports", href: "/reports" },
 ]
 
-export function PatriotHeader({ active = "console", status = "inactive", settingsSlot }: PatriotHeaderProps) {
+export function ActivityStatusBadge({
+  status,
+  activeLabel = "Active",
+  inactiveLabel = "Inactive",
+  className,
+}: {
+  status: "active" | "inactive"
+  activeLabel?: string
+  inactiveLabel?: string
+  className?: string
+}) {
   const isActive = status === "active"
 
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em]",
+        isActive ? "text-[#d9ffe6]" : "text-[#ffb7bd]",
+        className,
+      )}
+    >
+      <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+        <span
+          className={cn(
+            "absolute h-full w-full rounded-full opacity-80",
+            isActive ? "animate-ping bg-[#44d17a]/70" : "animate-ping bg-[#ec3844]/70",
+          )}
+        />
+        <span
+          className={cn(
+            "relative h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]",
+            isActive ? "bg-[#44d17a] text-[#44d17a]" : "bg-[#ec3844] text-[#ec3844]",
+          )}
+        />
+      </span>
+      <span>{isActive ? activeLabel : inactiveLabel}</span>
+    </div>
+  )
+}
+
+export function PatriotHeader({ active = "console", status = "inactive", settingsSlot }: PatriotHeaderProps) {
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
@@ -60,28 +98,7 @@ export function PatriotHeader({ active = "console", status = "inactive", setting
       </nav>
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
-        <div
-          className={cn(
-            "inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.2em]",
-            isActive ? "text-[#d9ffe6]" : "text-[#ffb7bd]",
-          )}
-        >
-          <span className="relative flex h-2.5 w-2.5 items-center justify-center">
-            <span
-              className={cn(
-                "absolute h-full w-full rounded-full opacity-80",
-                isActive ? "animate-ping bg-[#44d17a]/70" : "animate-ping bg-[#ec3844]/70",
-              )}
-            />
-            <span
-              className={cn(
-                "relative h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]",
-                isActive ? "bg-[#44d17a] text-[#44d17a]" : "bg-[#ec3844] text-[#ec3844]",
-              )}
-            />
-          </span>
-          <span>{isActive ? "Active" : "Inactive"}</span>
-        </div>
+        <ActivityStatusBadge status={status} />
         {settingsSlot ?? (
           <button type="button" className="text-white/45 hover:text-white">
             <Settings size={18} />

@@ -401,6 +401,17 @@ function formatTraceEvent(event: TimelineEvent) {
   }
 }
 
+function getTraceToolSignature(event: TimelineEvent) {
+  if (event.kind !== "tool") return null
+  const eventData = getNestedRecord(event.data)
+  const toolName = compactToolName(
+    String(eventData?.tool ?? eventData?.tool_name ?? event.title.replace(/^Tool (started|finished|running):\s*/i, ""))
+  )
+  const payload = event.sourceEventType === "tool.result" ? getToolResultPayload(event) : null
+  const target = getToolTarget(event, payload) ?? ""
+  return `${toolName}::${target}`
+}
+
 export function PatriotDashboard() {
   const [showIntro, setShowIntro] = useState(true)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
@@ -1454,6 +1465,29 @@ function TraceTerminalStream({
   timelineEvents: TimelineEvent[]
   isActive: boolean
 }) {
+  const activeToolSignatures = useMemo(() => {
+    const settled = new Set<string>()
+    const active = new Set<string>()
+
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+      const event = timelineEvents[index]
+      if (!event || event.kind !== "tool") continue
+      const signature = getTraceToolSignature(event)
+      if (!signature) continue
+
+      if (event.sourceEventType === "tool.result") {
+        settled.add(signature)
+        continue
+      }
+
+      if ((event.sourceEventType === "tool.intent" || event.sourceEventType === "tool.progress") && !settled.has(signature)) {
+        active.add(signature)
+      }
+    }
+
+    return active
+  }, [timelineEvents])
+
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
@@ -1475,7 +1509,11 @@ function TraceTerminalStream({
           {timelineEvents.map((event, index) => {
             const formatted = formatTraceEvent(event)
             const isTool = event.kind === "tool"
-            const isActiveTool = isTool && event.status === "running"
+            const toolSignature = isTool ? getTraceToolSignature(event) : null
+            const isActiveTool =
+              toolSignature !== null &&
+              event.sourceEventType !== "tool.result" &&
+              activeToolSignatures.has(toolSignature)
             const isLatest = event.id === timelineEvents.at(-1)?.id
             const shouldAnimate = shouldAnimateConsoleEntryOnce(`trace:${event.id}`, event.ts)
 
@@ -1489,14 +1527,14 @@ function TraceTerminalStream({
                 className="mb-3"
               >
                 <div className="flex items-start justify-between gap-3 text-[12px] leading-[1.5]">
-                  <div className={cn("min-w-0 flex-1 text-white/72", isTool && "text-[#ec3844]")}>
+                  <div className="min-w-0 flex-1 text-white/72">
                     {isActiveTool ? (
                       <TextShimmer
                         className="text-[12px]"
                         style={
                           {
-                            "--foreground": "rgb(255 201 206)",
-                            "--muted-foreground": "rgba(236, 56, 68, 0.42)",
+                            "--foreground": "rgb(255 255 255 / 0.9)",
+                            "--muted-foreground": "rgb(255 255 255 / 0.42)",
                           } as CSSProperties
                         }
                       >
@@ -1579,6 +1617,14 @@ function SummaryPanel({
       }),
     [runAssignments],
   )
+  const activePhaseAssignmentId = useMemo(() => {
+    if (rightRailStage !== "during") return null
+    return (
+      orderedAssignments.find((assignment) => assignment.status === "running")?.id ??
+      orderedAssignments.find((assignment) => assignment.status === "queued")?.id ??
+      null
+    )
+  }, [orderedAssignments, rightRailStage])
   const activeWorkerIds = useMemo(() => {
     if (rightRailStage !== "during") return new Set<string>()
     return new Set(
@@ -1611,7 +1657,21 @@ function SummaryPanel({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.16em] text-white/82">
                       <span className="text-white/35">{String(index + 1).padStart(2, "0")}</span>
-                      <span>{assignment.kind} / {assignment.capabilityFamily}</span>
+                      {assignment.id === activePhaseAssignmentId ? (
+                        <TextShimmer
+                          className="text-[12px] uppercase tracking-[0.16em]"
+                          style={
+                            {
+                              "--foreground": "rgb(255 255 255 / 0.88)",
+                              "--muted-foreground": "rgb(255 255 255 / 0.42)",
+                            } as CSSProperties
+                          }
+                        >
+                          {assignment.kind} / {assignment.capabilityFamily}
+                        </TextShimmer>
+                      ) : (
+                        <span>{assignment.kind} / {assignment.capabilityFamily}</span>
+                      )}
                     </div>
                     <div className="mt-1 text-[12px] text-white/58">
                       {worker?.name ?? assignment.workerId}
@@ -1675,7 +1735,7 @@ function SummaryPanel({
         ) : null}
       </AnimatePresence>
 
-      <motion.section layout className="space-y-3 pb-2">
+      <motion.section layout className="space-y-3 pb-4">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>
         {workers.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">

@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   startTransition,
   useDeferredValue,
   useEffect,
@@ -27,6 +28,7 @@ import { AnimatePresence, motion } from "motion/react"
 
 import { ActivityStatusBadge, PatriotHeader } from "@/components/patriot/patriot-header"
 import { PatriotIntro } from "@/components/patriot/patriot-intro"
+import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -70,6 +72,12 @@ type OperatorRunSettings = {
   profile: OperatorRunProfile
   workerId: OperatorWorkerSelection
 }
+
+const CONSOLE_ANIMATION_STORAGE_KEY = "patriot-console-animated-v1"
+const CONSOLE_ANIMATION_FRESHNESS_MS = 15_000
+const MAX_CONSOLE_ANIMATION_KEYS = 600
+
+let animatedConsoleEntryCache: Set<string> | null = null
 
 const modelOptions: Array<{ value: OperatorModel; label: string }> = [
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -118,6 +126,58 @@ function formatDateTime(value?: string) {
     hour: "2-digit",
     minute: "2-digit",
   })
+}
+
+function loadAnimatedConsoleEntryCache() {
+  if (animatedConsoleEntryCache) return animatedConsoleEntryCache
+  if (typeof window === "undefined") {
+    animatedConsoleEntryCache = new Set<string>()
+    return animatedConsoleEntryCache
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(CONSOLE_ANIMATION_STORAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as string[]) : []
+    animatedConsoleEntryCache = new Set(parsed)
+  } catch {
+    animatedConsoleEntryCache = new Set<string>()
+  }
+
+  return animatedConsoleEntryCache
+}
+
+function persistAnimatedConsoleEntryCache(cache: Set<string>) {
+  if (typeof window === "undefined") return
+  const compact = [...cache].slice(-MAX_CONSOLE_ANIMATION_KEYS)
+  animatedConsoleEntryCache = new Set(compact)
+  window.sessionStorage.setItem(CONSOLE_ANIMATION_STORAGE_KEY, JSON.stringify(compact))
+}
+
+function shouldAnimateConsoleEntryOnce(key: string, at?: string) {
+  const cache = loadAnimatedConsoleEntryCache()
+  if (cache.has(key)) return false
+
+  cache.add(key)
+  persistAnimatedConsoleEntryCache(cache)
+
+  if (!at) return false
+  const timestamp = new Date(at).getTime()
+  if (!Number.isFinite(timestamp)) return false
+  return Date.now() - timestamp < CONSOLE_ANIMATION_FRESHNESS_MS
+}
+
+function typewriterAnimationStyle(text: string, delayMs = 0) {
+  const steps = Math.max(1, Math.min(text.length || 1, 160))
+  const durationMs = Math.max(180, Math.min(1400, steps * 18))
+  const caretLoops = Math.max(1, Math.ceil(durationMs / 520))
+
+  return {
+    animation: [
+      `typewriter-reveal ${durationMs}ms steps(${steps}, end) ${delayMs}ms 1 both`,
+      `typewriter-caret 520ms steps(1, end) ${delayMs}ms ${caretLoops} both`,
+      `typewriter-caret-hide 1ms linear ${delayMs + durationMs}ms 1 forwards`,
+    ].join(", "),
+  } as const
 }
 
 function runStatusTone(status?: RunRecord["status"]) {
@@ -895,6 +955,7 @@ export function PatriotDashboard() {
                   ) : (
                     <AgentMessageCard
                       key={message.id}
+                      messageId={message.id}
                       role={message.role}
                       content={message.content}
                       at={message.createdAt}
@@ -1167,15 +1228,18 @@ function RunSettingsMenu({
 }
 
 function AgentMessageCard({
+  messageId,
   role,
   content,
   at,
 }: {
+  messageId: string
   role: SessionMessageRecord["role"]
   content: string
   at?: string
 }) {
   const lines = content.split("\n")
+  const shouldAnimate = shouldAnimateConsoleEntryOnce(`message:${messageId}`, at)
 
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
@@ -1183,20 +1247,23 @@ function AgentMessageCard({
         <div>{role === "assistant" ? "Patriot" : "System"}</div>
         {at ? <div>{formatTime(at)}</div> : null}
       </div>
-      <AnimatePresence initial={false}>
-        {lines.map((line, index) => (
-          <motion.div
-            key={`${role}-${at ?? "none"}-${index}`}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, delay: Math.min(index * 0.03, 0.18) }}
-            className="whitespace-pre-wrap text-[12px] leading-6 text-white/78"
-          >
-            {line || " "}
-          </motion.div>
-        ))}
-      </AnimatePresence>
+      <div>
+        {lines.map((line, index) => {
+          const displayLine = line || " "
+          return (
+            <div
+              key={`${role}-${messageId}-${index}`}
+              className={cn(
+                "text-[12px] leading-6 text-white/78",
+                shouldAnimate && "typewriter-label [white-space:pre-wrap]",
+              )}
+              style={shouldAnimate ? typewriterAnimationStyle(displayLine, Math.min(index * 90, 420)) : undefined}
+            >
+              {displayLine}
+            </div>
+          )
+        })}
+      </div>
     </article>
   )
 }
@@ -1408,7 +1475,9 @@ function TraceTerminalStream({
           {timelineEvents.map((event, index) => {
             const formatted = formatTraceEvent(event)
             const isTool = event.kind === "tool"
+            const isActiveTool = isTool && event.status === "running"
             const isLatest = event.id === timelineEvents.at(-1)?.id
+            const shouldAnimate = shouldAnimateConsoleEntryOnce(`trace:${event.id}`, event.ts)
 
             return (
               <motion.div
@@ -1421,7 +1490,28 @@ function TraceTerminalStream({
               >
                 <div className="flex items-start justify-between gap-3 text-[12px] leading-[1.5]">
                   <div className={cn("min-w-0 flex-1 text-white/72", isTool && "text-[#ec3844]")}>
-                    <span>{formatted.label}</span>
+                    {isActiveTool ? (
+                      <TextShimmer
+                        className="text-[12px]"
+                        style={
+                          {
+                            "--foreground": "rgb(255 201 206)",
+                            "--muted-foreground": "rgba(236, 56, 68, 0.42)",
+                          } as CSSProperties
+                        }
+                      >
+                        {formatted.label}
+                      </TextShimmer>
+                    ) : (
+                      <span
+                        className={cn(
+                          shouldAnimate && "typewriter-label [white-space:pre-wrap]",
+                        )}
+                        style={shouldAnimate ? typewriterAnimationStyle(formatted.label) : undefined}
+                      >
+                        {formatted.label}
+                      </span>
+                    )}
                     {isActive && isLatest ? <TerminalCursor /> : null}
                   </div>
 
@@ -1433,15 +1523,15 @@ function TraceTerminalStream({
                 {formatted.facts.length > 0 ? (
                   <div className="mt-2 space-y-1 border-l border-white/8 pl-3 text-[11px] leading-5 text-white/58">
                     {formatted.facts.map((fact) => (
-                      <motion.div
+                      <div
                         key={`${event.id}-${fact}`}
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.16 }}
+                        className={cn(
+                          shouldAnimate && "typewriter-label block max-w-full [white-space:pre-wrap]",
+                        )}
+                        style={shouldAnimate ? typewriterAnimationStyle(fact, 90) : undefined}
                       >
                         {fact}
-                      </motion.div>
+                      </div>
                     ))}
                   </div>
                 ) : null}
@@ -1585,7 +1675,7 @@ function SummaryPanel({
         ) : null}
       </AnimatePresence>
 
-      <motion.section layout className="space-y-3">
+      <motion.section layout className="space-y-3 pb-2">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>
         {workers.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">

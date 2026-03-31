@@ -413,6 +413,10 @@ function getTraceToolSignature(event: TimelineEvent) {
 }
 
 export function PatriotDashboard() {
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const chatContentRef = useRef<HTMLDivElement | null>(null)
+  const shouldStickChatToBottomRef = useRef(true)
+  const shouldUseInstantChatScrollRef = useRef(true)
   const [showIntro, setShowIntro] = useState(true)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [workers, setWorkers] = useState<WorkerRecord[]>([])
@@ -869,6 +873,11 @@ export function PatriotDashboard() {
   )
   const autoContinueKeyRef = useRef<string | null>(null)
   const previousRightRailStage = useRef<RightRailStage>(rightRailStage)
+  const scrollChatToBottom = useEffectEvent((behavior: ScrollBehavior = "smooth") => {
+    const container = chatScrollRef.current
+    if (!container) return
+    container.scrollTo({ top: container.scrollHeight, behavior })
+  })
 
   useEffect(() => {
     if (previousRightRailStage.current === "during" && rightRailStage === "after") {
@@ -891,13 +900,62 @@ export function PatriotDashboard() {
     void continuePendingLocalRun()
   }, [
     compatibleOnlineFieldWorker,
-    continuePendingLocalRun,
     isResumingPendingLocalRun,
     isSetupReady,
     pendingLocalPrompt,
     selectedSessionId,
     shouldShowPendingLocalBanner,
   ])
+
+  useEffect(() => {
+    const container = chatScrollRef.current
+    const content = chatContentRef.current
+
+    if (!container || !content) return
+
+    const updateStickiness = () => {
+      const distanceFromBottom = container.scrollHeight - container.clientHeight - container.scrollTop
+      shouldStickChatToBottomRef.current = distanceFromBottom <= 48
+    }
+
+    updateStickiness()
+
+    const handleScroll = () => {
+      updateStickiness()
+    }
+
+    container.addEventListener("scroll", handleScroll, { passive: true })
+
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        container.removeEventListener("scroll", handleScroll)
+      }
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (!shouldStickChatToBottomRef.current) return
+      window.requestAnimationFrame(() => {
+        scrollChatToBottom(shouldUseInstantChatScrollRef.current ? "auto" : "smooth")
+        shouldUseInstantChatScrollRef.current = false
+      })
+    })
+
+    resizeObserver.observe(content)
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll)
+      resizeObserver.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
+    shouldStickChatToBottomRef.current = true
+    shouldUseInstantChatScrollRef.current = true
+    window.requestAnimationFrame(() => {
+      scrollChatToBottom("auto")
+      shouldUseInstantChatScrollRef.current = false
+    })
+  }, [selectedRunId, selectedSessionId])
 
   return (
     <div className="relative h-dvh overflow-hidden bg-[#101010] text-white industrial-grid">
@@ -938,7 +996,7 @@ export function PatriotDashboard() {
 
           </div>
 
-          <div className="min-h-0 overflow-y-auto px-4 py-3">
+          <div ref={chatScrollRef} className="min-h-0 overflow-y-auto px-4 py-3">
             {error ? (
               <div className="mb-3 border border-[#ec3844]/50 bg-[#1a0d11] px-3 py-2 text-[11px] uppercase tracking-[0.16em] text-[#ffb3b8]">
                 {error}
@@ -951,7 +1009,7 @@ export function PatriotDashboard() {
                 Loading session
               </div>
             ) : (
-              <div className="space-y-4">
+              <div ref={chatContentRef} className="space-y-4">
                 {visibleMessages.length === 0 && !traceState.hasTrace ? (
                   <EmptyChatState copy="Create a session and send a recon prompt to start collecting trace data and reports." />
                 ) : null}

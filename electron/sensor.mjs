@@ -106,6 +106,24 @@ async function checkNmap() {
   return Boolean(result.ok)
 }
 
+function runtimeProbeArgs(tool) {
+  switch (tool) {
+    case "nmap":
+      return ["--version"]
+    case "powershell":
+      return ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.ToString()"]
+    default:
+      return null
+  }
+}
+
+function runtimeProbeFix(tool) {
+  if (tool === "nmap") {
+    return "Reinstall nmap and confirm it runs from the same desktop environment as Patriot Desktop."
+  }
+  return `Verify ${tool} can execute from the Patriot Desktop runtime, not just resolve on PATH.`
+}
+
 async function checkTool(tool) {
   const lookup =
     process.platform === "win32"
@@ -120,10 +138,29 @@ async function checkTool(tool) {
       evidence: [result.stderr || `${tool} is not on PATH`],
     }
   }
+  const bin = String(result.stdout).split("\n")[0]?.trim() || tool
+  const probeArgs = runtimeProbeArgs(tool)
+  const probe = probeArgs ? await runCommand(bin, probeArgs) : { ok: true, stdout: "", stderr: "", exitCode: 0 }
+  const version = String(probe.stdout || probe.stderr || "").split("\n")[0]?.trim() || undefined
+  if (probeArgs && !probe.ok) {
+    return {
+      tool,
+      state: "degraded",
+      bin,
+      version,
+      missingDependencies: [tool],
+      evidence: [
+        `resolved ${tool} on PATH`,
+        `runtime probe failed: ${tool} ${probeArgs.join(" ")}`,
+        String(probe.stderr || probe.stdout || `${tool} exited ${probe.exitCode ?? "null"}`).slice(0, 500),
+      ],
+    }
+  }
   return {
     tool,
     state: "available",
-    bin: String(result.stdout).split("\n")[0]?.trim() || tool,
+    bin,
+    version,
     evidence: [`resolved ${tool} on PATH`, `PATH=${process.env.PATH ?? ""}`],
   }
 }
@@ -224,7 +261,9 @@ async function desktopCapabilities() {
       ],
       recommendedFixes: [
         ...macDiagnostics.recommendedFixes,
-        ...toolInventory.filter((entry) => entry.state === "missing").map((entry) => `Install or expose ${entry.tool} on PATH.`),
+        ...toolInventory
+          .filter((entry) => entry.state === "missing" || entry.state === "degraded")
+          .map((entry) => (entry.state === "missing" ? `Install or expose ${entry.tool} on PATH.` : runtimeProbeFix(entry.tool))),
       ],
     },
   }

@@ -92,6 +92,9 @@ function hasReconDeliverablesContent(report: Pick<StableRunReport, "recon_delive
     deliverables.javascript_routes,
     deliverables.third_party_integrations,
     deliverables.storage_exposures,
+    deliverables.cloud_platform_hints,
+    deliverables.kubernetes_hints,
+    deliverables.cloud_boundaries,
     ...deliverables.surface_clusters.map((cluster) => cluster.items),
     deliverables.trust_boundaries,
     deliverables.next_actions,
@@ -199,6 +202,9 @@ export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRu
             <DeliverableSection label="JavaScript routes" items={report.recon_deliverables.javascript_routes} />
             <DeliverableSection label="Integrations" items={report.recon_deliverables.third_party_integrations} />
             <DeliverableSection label="Storage exposure" items={report.recon_deliverables.storage_exposures} />
+            <DeliverableSection label="Cloud platform hints" items={report.recon_deliverables.cloud_platform_hints} />
+            <DeliverableSection label="Kubernetes hints" items={report.recon_deliverables.kubernetes_hints} />
+            <DeliverableSection label="Cloud boundaries" items={report.recon_deliverables.cloud_boundaries} />
             {report.recon_deliverables.surface_clusters.map((cluster) => (
               <DeliverableSection key={cluster.label} label={cluster.label} items={cluster.items} />
             ))}
@@ -207,6 +213,43 @@ export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRu
 
           <DeliverableSection label="Next actions" items={report.recon_deliverables.next_actions} />
         </>
+      ) : null}
+
+      {report.response_diffs.length > 0 ? (
+        <div className="border border-white/10 bg-[#101010] p-4">
+          <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+            <FileStack size={14} />
+            Auth / API Diffs
+          </div>
+          <div className="space-y-2 text-[12px] leading-6 text-white/72">
+            {report.response_diffs.slice(0, 8).map((item) => (
+              <div key={`${item.path}-${item.comparison_context}`} className="border border-white/10 bg-[#0d0d0d] px-3 py-2">
+                <div className="break-all text-white/84">{item.path}</div>
+                <div className="mt-1 text-[11px] text-white/52">
+                  {item.baseline_context} ({item.baseline_status ?? "?"}) → {item.comparison_context} ({item.comparison_status ?? "?"})
+                  {item.auth_only ? " / auth-only" : item.shape_changed ? " / shape-changed" : item.changed ? " / changed" : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {report.attack_paths.length > 0 ? (
+        <div className="border border-white/10 bg-[#101010] p-4">
+          <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+            <ShieldAlert size={14} />
+            Attack Paths
+          </div>
+          <div className="space-y-2 text-[12px] leading-6 text-white/72">
+            {report.attack_paths.slice(0, 6).map((item) => (
+              <div key={item.id} className="border border-white/10 bg-[#0d0d0d] px-3 py-2">
+                <div className="text-white/84">{item.title}</div>
+                <div className="mt-1 text-[11px] text-white/52">{item.steps.join(" → ")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : null}
 
       {report.assignments.length > 0 ? (

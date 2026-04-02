@@ -552,6 +552,8 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
   const shouldStickChatToBottomRef = useRef(true)
   const shouldUseInstantChatScrollRef = useRef(true)
   const selectedRunIdRef = useRef<string | null>(null)
+  const selectedSessionIdRef = useRef<string | null>(routeSessionId ?? null)
+  const sessionLoadRequestIdRef = useRef(0)
   const traceSessionIdRef = useRef<string | null>(null)
   const [showIntro, setShowIntro] = useState(true)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
@@ -588,6 +590,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
     [runs],
   )
   const orderedSessionRunIds = useMemo(() => orderedSessionRuns.map((run) => run.id), [orderedSessionRuns])
+  const orderedSessionRunIdsKey = useMemo(() => orderedSessionRunIds.join("|"), [orderedSessionRunIds])
   const selectedRun =
     runs.find((run) => run.id === selectedRunId) ??
     runs.find((run) => run.id === currentSession?.currentRunId) ??
@@ -688,11 +691,15 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
     const response = await patriotApi.listSessions()
     startTransition(() => {
       setSessions(response.sessions)
-      if (!selectedSessionId && !routeSessionId && response.sessions.length > 0) setSelectedSessionId(response.sessions[0]!.id)
+      setSelectedSessionId((current) => {
+        if (current || routeSessionId || response.sessions.length === 0) return current
+        return response.sessions[0]!.id
+      })
     })
   }
 
   const loadSessionState = async (sessionId: string) => {
+    const requestId = ++sessionLoadRequestIdRef.current
     setIsLoading(true)
     setError(null)
     try {
@@ -700,6 +707,8 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
         patriotApi.getSessionState(sessionId),
         patriotApi.getSessionMessages(sessionId),
       ])
+
+      if (requestId !== sessionLoadRequestIdRef.current || selectedSessionIdRef.current !== sessionId) return
 
       startTransition(() => {
         setSessionState(stateResponse)
@@ -714,14 +723,22 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
         })
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      if (requestId === sessionLoadRequestIdRef.current) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
     } finally {
-      setIsLoading(false)
+      if (requestId === sessionLoadRequestIdRef.current) {
+        setIsLoading(false)
+      }
     }
   }
 
   const refreshSessions = useEffectEvent(async () => {
-    await syncSessionsList()
+    try {
+      await syncSessionsList()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   })
 
   const refreshWorkers = useEffectEvent(async () => {
@@ -796,6 +813,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
 
   useEffect(() => {
     if (!routeSessionId) return
+    sessionLoadRequestIdRef.current += 1
     startTransition(() => {
       setSelectedSessionId(routeSessionId)
       setSelectedRunId(null)
@@ -825,6 +843,10 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
   useEffect(() => {
     selectedRunIdRef.current = selectedRunId
   }, [selectedRunId])
+
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId
+  }, [selectedSessionId])
 
   useEffect(() => {
     if (!pendingLocalBootstrap?.token) {
@@ -883,17 +905,23 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
 
     if (!activeSessionId) {
       traceSessionIdRef.current = null
-      setTimelineEvents([])
+      startTransition(() => {
+        setTimelineEvents((current) => (current.length === 0 ? current : []))
+      })
       return
     }
 
     if (traceSessionIdRef.current !== activeSessionId) {
       traceSessionIdRef.current = activeSessionId
-      startTransition(() => setTimelineEvents([]))
+      startTransition(() => {
+        setTimelineEvents((current) => (current.length === 0 ? current : []))
+      })
     }
 
     if (runIds.length === 0) {
-      startTransition(() => setTimelineEvents([]))
+      startTransition(() => {
+        setTimelineEvents((current) => (current.length === 0 ? current : []))
+      })
       return
     }
 
@@ -940,7 +968,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
       closed = true
       for (const source of sources) source.close()
     }
-  }, [deferredSessionId, orderedSessionRunIds, selectedSessionId])
+  }, [deferredSessionId, orderedSessionRunIds, orderedSessionRunIdsKey, selectedSessionId])
 
   const createSession = async () => {
     setIsCreatingSession(true)
@@ -950,15 +978,25 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
         title: `Session ${new Date().toLocaleDateString()}`,
         createdBy: "operator",
       })
-      await syncSessionsList()
+      sessionLoadRequestIdRef.current += 1
       startTransition(() => {
+        setSessions((current) => {
+          const next = [...current.filter((item) => item.id !== session.id), session]
+          return next.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        })
         setSelectedSessionId(session.id)
         setMessages([])
         setSessionState(null)
         setSelectedRunId(null)
+        setTimelineEvents([])
+        setArtifacts([])
+        setRunAssignments([])
         setDraft("")
       })
       onSessionChange?.(session.id)
+      void syncSessionsList().catch((err) => {
+        setError(err instanceof Error ? err.message : String(err))
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -974,11 +1012,24 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
       createdBy: "operator",
     })
 
-    await syncSessionsList()
+    sessionLoadRequestIdRef.current += 1
     startTransition(() => {
+      setSessions((current) => {
+        const next = [...current.filter((item) => item.id !== session.id), session]
+        return next.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      })
       setSelectedSessionId(session.id)
+      setMessages([])
+      setSessionState(null)
+      setSelectedRunId(null)
+      setTimelineEvents([])
+      setArtifacts([])
+      setRunAssignments([])
     })
     onSessionChange?.(session.id)
+    void syncSessionsList().catch((err) => {
+      setError(err instanceof Error ? err.message : String(err))
+    })
     return session.id
   }
 
@@ -2169,6 +2220,9 @@ function SummaryPanel({
               { label: "JavaScript routes", items: reconDeliverables.javascript_routes },
               { label: "Integrations", items: reconDeliverables.third_party_integrations },
               { label: "Storage exposure", items: reconDeliverables.storage_exposures },
+              { label: "Cloud platform hints", items: reconDeliverables.cloud_platform_hints },
+              { label: "Kubernetes hints", items: reconDeliverables.kubernetes_hints },
+              { label: "Cloud boundaries", items: reconDeliverables.cloud_boundaries },
               { label: "Trust boundaries", items: reconDeliverables.trust_boundaries },
               ...reconDeliverables.surface_clusters.map((cluster) => ({ label: cluster.label, items: cluster.items })),
             ].map(({ label, items }) =>

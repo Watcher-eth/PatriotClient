@@ -272,9 +272,91 @@ export type ReconDeliverables = {
   javascript_routes: ReconDeliverableItem[]
   third_party_integrations: ReconDeliverableItem[]
   storage_exposures: ReconDeliverableItem[]
+  cloud_platform_hints: ReconDeliverableItem[]
+  kubernetes_hints: ReconDeliverableItem[]
+  cloud_boundaries: ReconDeliverableItem[]
   surface_clusters: SurfaceCluster[]
   trust_boundaries: ReconDeliverableItem[]
   next_actions: ReconDeliverableItem[]
+}
+
+export type AuthContextRecord = {
+  name: string
+  type: "anonymous" | "user" | "admin" | "custom"
+}
+
+export type ResponseDiffRecord = {
+  path: string
+  baseline_context: string
+  comparison_context: string
+  baseline_status?: number
+  comparison_status?: number
+  changed: boolean
+  auth_only: boolean
+  shape_changed: boolean
+  evidence_refs: string[]
+}
+
+export type EvidenceGraphNode = {
+  id: string
+  kind: "host" | "url" | "service" | "api" | "identity" | "storage" | "cloud" | "boundary"
+  label: string
+  evidence_refs: string[]
+  confidence: "confirmed" | "inferred"
+}
+
+export type EvidenceGraphEdge = {
+  from: string
+  to: string
+  relation: string
+  evidence_refs: string[]
+  confidence: "confirmed" | "inferred"
+}
+
+export type EvidenceGraphRecord = {
+  nodes: EvidenceGraphNode[]
+  edges: EvidenceGraphEdge[]
+  coverage_debt: string[]
+}
+
+export type RankedCandidate = {
+  id: string
+  title: string
+  category: string
+  confidence: "low" | "medium" | "high"
+  exploitability_score: number
+  blast_radius: "limited" | "moderate" | "broad"
+  chainability_score: number
+  requires_validation: boolean
+  originating_evidence: string[]
+  rationale: string
+}
+
+export type AttackPathRecord = {
+  id: string
+  title: string
+  confidence: "low" | "medium" | "high"
+  chainability_score: number
+  steps: string[]
+  evidence_refs: string[]
+}
+
+export type BenchmarkExpectedFinding = {
+  id: string
+  title: string
+  category: string
+  severity?: FindingRecord["severity"]
+}
+
+export type BenchmarkResult = {
+  suite: string
+  target_class: "seeded" | "blind" | "retest"
+  expected_findings: BenchmarkExpectedFinding[]
+  confirmed_found: number
+  misses: number
+  false_positives: number
+  score_buckets: Record<string, number>
+  regression_delta: number
 }
 
 export type RunRecord = {
@@ -305,6 +387,20 @@ export type RunRecord = {
     requiresWirelessInjection: boolean
   }
   targetScope?: string[]
+  authContexts?: Array<{
+    name: string
+    type: "anonymous" | "user" | "admin" | "custom"
+    headers?: string[]
+    cookie?: string
+    localStorage?: Record<string, string>
+    sessionStorage?: Record<string, string>
+    initScripts?: string[]
+  }>
+  benchmark?: {
+    suite: string
+    targetClass: "seeded" | "blind" | "retest"
+    expectedFindings?: BenchmarkExpectedFinding[]
+  }
 }
 
 export type ArtifactRecord = {
@@ -373,6 +469,33 @@ export type TimelineEvent = {
 
 export type StableRunReport = {
   schema_version: "patriot.report.v1"
+  run: {
+    id: string
+    prompt: string
+    goal: string
+    source?: string
+    mode?: string
+    tier?: string
+    safety_enabled?: boolean
+    created_at?: string
+    completed_at?: string
+    created_by?: string
+    phase?: string
+    status?: string
+    auth_contexts: AuthContextRecord[]
+    benchmark?: BenchmarkResult
+  }
+  worker?: {
+    id: string
+    type: string
+    platform: string
+    capabilities: string[]
+    adapter?: Record<string, unknown>
+  }
+  scope?: {
+    constraints: Record<string, unknown>
+    target_scope: string[]
+  }
   narrative: { summary: string; output: string }
   assignments: Array<{
     id: string
@@ -394,10 +517,42 @@ export type StableRunReport = {
   findings: FindingRecord[]
   tool_evidence: ReducedToolEvidence[]
   stop_recommendations: string[]
+  validation_candidates: Array<{
+    id: string
+    title: string
+    category: string
+    confidence: "confirmed" | "inferred"
+    exploitability_score: number
+    blast_radius: "limited" | "moderate" | "broad"
+    evidence_refs: string[]
+    rationale: string
+    minimal_reproduction: string
+    impact: string
+    remediation: string
+    telemetry: string
+  }>
+  response_diffs: ResponseDiffRecord[]
+  context_sensitive_surfaces: ReconDeliverableItem[]
+  evidence_graph: EvidenceGraphRecord
+  ranked_candidates: RankedCandidate[]
+  attack_paths: AttackPathRecord[]
+  generated_at?: string
 }
 
 export type StableSessionReport = {
   schema_version: "patriot.session.v1"
+  session: {
+    id: string
+    title: string
+    status: string
+    created_at: string
+    updated_at: string
+    created_by?: string
+    current_run_id?: string
+    summary?: string
+    metadata: Record<string, unknown>
+    auth_contexts: AuthContextRecord[]
+  }
   narrative: { summary: string }
   assessment: AssessmentRecord
   preflight: PreflightRecord
@@ -409,6 +564,13 @@ export type StableSessionReport = {
   stop_recommendations: string[]
   summary_hints: string[]
   run_ids: string[]
+  validation_candidates: StableRunReport["validation_candidates"]
+  response_diffs: ResponseDiffRecord[]
+  context_sensitive_surfaces: ReconDeliverableItem[]
+  evidence_graph: EvidenceGraphRecord
+  ranked_candidates: RankedCandidate[]
+  attack_paths: AttackPathRecord[]
+  generated_at?: string
 }
 
 export type SessionStateResponse = {

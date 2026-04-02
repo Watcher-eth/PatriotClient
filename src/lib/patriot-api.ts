@@ -217,6 +217,44 @@ export type ReducedEvidenceState = {
   summary_hints: string[]
 }
 
+export type ReconCoverage = {
+  homepage_fetch: boolean
+  redirect_chain: boolean
+  headers: boolean
+  tls: boolean
+  passive_subdomains: boolean
+  html_js_extraction: boolean
+}
+
+export type AssessmentRecord = {
+  status: "fulfilled" | "partial" | "invalid"
+  request_fulfilled: boolean
+  gate_failures: string[]
+  minimum_coverage: ReconCoverage
+  coverage_summary: string
+}
+
+export type ReconDeliverableItem = {
+  value: string
+  confidence: "confirmed" | "inferred"
+  evidence_refs: string[]
+  notes?: string
+}
+
+export type ReconDeliverables = {
+  domains: ReconDeliverableItem[]
+  subdomains: ReconDeliverableItem[]
+  entry_points: ReconDeliverableItem[]
+  login_surfaces: ReconDeliverableItem[]
+  admin_surfaces: ReconDeliverableItem[]
+  api_endpoints: ReconDeliverableItem[]
+  javascript_routes: ReconDeliverableItem[]
+  third_party_integrations: ReconDeliverableItem[]
+  storage_exposures: ReconDeliverableItem[]
+  trust_boundaries: ReconDeliverableItem[]
+  next_actions: ReconDeliverableItem[]
+}
+
 export type RunRecord = {
   id: string
   prompt: string
@@ -326,6 +364,8 @@ export type StableRunReport = {
     notes: string[]
     error?: string
   }>
+  assessment: AssessmentRecord
+  recon_deliverables: ReconDeliverables
   assets: AssetRecord[]
   findings: FindingRecord[]
   tool_evidence: ReducedToolEvidence[]
@@ -335,6 +375,8 @@ export type StableRunReport = {
 export type StableSessionReport = {
   schema_version: "patriot.session.v1"
   narrative: { summary: string }
+  assessment: AssessmentRecord
+  recon_deliverables: ReconDeliverables
   assets: AssetRecord[]
   findings: FindingRecord[]
   tool_evidence: ReducedToolEvidence[]

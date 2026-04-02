@@ -1,6 +1,6 @@
 "use client"
 
-import { Boxes, FileCode2, FileStack, FolderArchive, ShieldAlert } from "lucide-react"
+import { AlertTriangle, Boxes, CheckCircle2, FileCode2, FileStack, FolderArchive, ShieldAlert } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type {
@@ -8,6 +8,8 @@ import type {
   AssetRecord,
   FindingRecord,
   ReducedToolEvidence,
+  ReconCoverage,
+  ReconDeliverableItem,
   RunRecord,
   StableRunReport,
 } from "@/lib/patriot-api"
@@ -59,13 +61,80 @@ function statusTone(status: ReducedToolEvidence["status"]) {
   }
 }
 
+function assessmentTone(status: StableRunReport["assessment"]["status"]) {
+  switch (status) {
+    case "fulfilled":
+      return "border-[#17341f] bg-[#101b14] text-[#9fe8b0]"
+    case "invalid":
+      return "border-[#5a171d] bg-[#190d11] text-[#ffadb3]"
+    default:
+      return "border-[#4f4617] bg-[#17140d] text-[#f3dc7a]"
+  }
+}
+
+function coverageLabel(key: keyof ReconCoverage) {
+  return key.replace(/_/g, " ")
+}
+
+function DeliverableSection({ label, items }: { label: string; items: ReconDeliverableItem[] }) {
+  if (items.length === 0) return null
+
+  return (
+    <div className="border border-white/10 bg-[#0d0d0d] p-3">
+      <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
+      <div className="space-y-2 text-[12px] leading-6 text-white/68">
+        {items.slice(0, 8).map((item) => (
+          <div key={`${label}-${item.value}`} className="flex items-start justify-between gap-3">
+            <span className="min-w-0 break-all">{item.value}</span>
+            <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-white/38">{item.confidence}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRunReport }) {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-4">
         <MetricCard label="Run" value={run.status} detail={run.id} />
+        <MetricCard label="Assessment" value={report.assessment.status} />
         <MetricCard label="Findings" value={String(report.findings.length).padStart(2, "0")} />
         <MetricCard label="Assets" value={String(report.assets.length).padStart(2, "0")} />
+      </div>
+
+      <div className={cn("border p-4", assessmentTone(report.assessment.status))}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em]">
+            {report.assessment.status === "fulfilled" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+            Assessment status
+          </div>
+          <div className="text-[10px] uppercase tracking-[0.18em]">
+            {report.assessment.request_fulfilled ? "fulfilled" : "unfulfilled"}
+          </div>
+        </div>
+        <div className="mt-3 text-[12px] leading-6">{report.assessment.coverage_summary}</div>
+        {report.assessment.gate_failures.length > 0 ? (
+          <div className="mt-3 text-[11px] leading-5">
+            Gate failures: {report.assessment.gate_failures.join(", ")}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="border border-white/10 bg-[#101010] p-4">
+        <div className="mb-3 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
+          <CheckCircle2 size={14} />
+          Minimum Coverage
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          {Object.entries(report.assessment.minimum_coverage).map(([key, value]) => (
+            <div key={key} className="flex items-center justify-between border border-white/10 px-3 py-2 text-[12px] text-white/72">
+              <span className="uppercase tracking-[0.16em] text-white/45">{coverageLabel(key as keyof ReconCoverage)}</span>
+              <span className={value ? "text-[#9fe8b0]" : "text-[#ffadb3]"}>{value ? "yes" : "no"}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="border border-white/10 bg-[#101010] p-4">
@@ -75,6 +144,21 @@ export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRu
         </div>
         <div className="whitespace-pre-wrap text-[13px] leading-7 text-white/82">{report.narrative.summary}</div>
       </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <DeliverableSection label="Domains" items={report.recon_deliverables.domains} />
+        <DeliverableSection label="Subdomains" items={report.recon_deliverables.subdomains} />
+        <DeliverableSection label="Entry points" items={report.recon_deliverables.entry_points} />
+        <DeliverableSection label="Login surfaces" items={report.recon_deliverables.login_surfaces} />
+        <DeliverableSection label="Admin surfaces" items={report.recon_deliverables.admin_surfaces} />
+        <DeliverableSection label="API endpoints" items={report.recon_deliverables.api_endpoints} />
+        <DeliverableSection label="JavaScript routes" items={report.recon_deliverables.javascript_routes} />
+        <DeliverableSection label="Integrations" items={report.recon_deliverables.third_party_integrations} />
+        <DeliverableSection label="Storage exposure" items={report.recon_deliverables.storage_exposures} />
+        <DeliverableSection label="Trust boundaries" items={report.recon_deliverables.trust_boundaries} />
+      </div>
+
+      <DeliverableSection label="Next actions" items={report.recon_deliverables.next_actions} />
 
       {report.assignments.length > 0 ? (
         <div className="border border-white/10 bg-[#101010] p-4">

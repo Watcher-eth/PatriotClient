@@ -212,6 +212,21 @@ function severityTone(severity: FindingRecord["severity"]) {
   }
 }
 
+function assessmentBadgeTone(status?: SessionStateResponse["report"]["assessment"]["status"]) {
+  switch (status) {
+    case "fulfilled":
+      return "border-[#17341f] bg-[#101b14] text-[#9fe8b0]"
+    case "invalid":
+      return "border-[#5a171d] bg-[#190d11] text-[#ffadb3]"
+    default:
+      return "border-[#4f4617] bg-[#17140d] text-[#f3dc7a]"
+  }
+}
+
+function coverageChecklistLabel(key: string) {
+  return key.replace(/_/g, " ")
+}
+
 function compactToolName(tool: string) {
   return tool.split("__").filter(Boolean).at(-1) ?? tool
 }
@@ -1851,6 +1866,8 @@ function SummaryPanel({
   const hasNarrative = narrative.length > 0
   const shouldShowNarrative =
     (selectedRun?.status === "completed" || selectedRun?.status === "failed") && hasNarrative
+  const assessment = sessionState?.report.assessment
+  const reconDeliverables = sessionState?.report.recon_deliverables
 
   return (
     <div className="space-y-6">
@@ -1948,6 +1965,72 @@ function SummaryPanel({
           </motion.section>
         ) : null}
       </AnimatePresence>
+
+      {assessment ? (
+        <motion.section layout className="space-y-3">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Assessment</div>
+          <div className={cn("border p-4", assessmentBadgeTone(assessment.status))}>
+            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em]">
+              <span>{assessment.status}</span>
+              <span>{assessment.request_fulfilled ? "fulfilled" : "unfulfilled"}</span>
+            </div>
+            <div className="mt-3 text-[12px] leading-6">{assessment.coverage_summary}</div>
+            {assessment.gate_failures.length > 0 ? (
+              <div className="mt-3 text-[11px] leading-5">Gate failures: {assessment.gate_failures.join(", ")}</div>
+            ) : null}
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {Object.entries(assessment.minimum_coverage).map(([key, value]) => (
+              <div key={key} className="flex items-center justify-between border border-white/10 px-3 py-2 text-[12px] text-white/72">
+                <span className="uppercase tracking-[0.16em] text-white/40">{coverageChecklistLabel(key)}</span>
+                <span className={value ? "text-[#9fe8b0]" : "text-[#ffadb3]"}>{value ? "yes" : "no"}</span>
+              </div>
+            ))}
+          </div>
+        </motion.section>
+      ) : null}
+
+      {reconDeliverables ? (
+        <motion.section layout className="space-y-3">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Recon Deliverables</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {[
+              { label: "Domains", items: reconDeliverables.domains },
+              { label: "Subdomains", items: reconDeliverables.subdomains },
+              { label: "Entry points", items: reconDeliverables.entry_points },
+              { label: "Login surfaces", items: reconDeliverables.login_surfaces },
+              { label: "Admin surfaces", items: reconDeliverables.admin_surfaces },
+              { label: "API endpoints", items: reconDeliverables.api_endpoints },
+              { label: "JavaScript routes", items: reconDeliverables.javascript_routes },
+              { label: "Integrations", items: reconDeliverables.third_party_integrations },
+            ].map(({ label, items }) =>
+              items.length > 0 ? (
+                <div key={label} className="border border-white/10 bg-[#101010] p-3">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
+                  <div className="space-y-2 text-[12px] leading-6 text-white/68">
+                    {items.slice(0, 6).map((item) => (
+                      <div key={`${label}-${item.value}`} className="flex items-start justify-between gap-3">
+                        <span className="min-w-0 break-all">{item.value}</span>
+                        <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-white/38">{item.confidence}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null,
+            )}
+          </div>
+          {reconDeliverables.next_actions.length > 0 ? (
+            <div className="border border-white/10 bg-[#101010] p-3">
+              <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Next actions</div>
+              <div className="space-y-2 text-[12px] leading-6 text-white/68">
+                {reconDeliverables.next_actions.slice(0, 10).map((item) => (
+                  <div key={item.value}>- {item.value}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </motion.section>
+      ) : null}
 
       <motion.section layout className="space-y-3 pb-4">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>

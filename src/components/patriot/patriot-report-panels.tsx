@@ -83,32 +83,33 @@ function hasAssessmentEvidence(report: Pick<StableRunReport, "tool_evidence" | "
 function hasReconDeliverablesContent(report: Pick<StableRunReport, "recon_deliverables">) {
   const deliverables = report.recon_deliverables
   return [
-    deliverables.domains,
-    deliverables.subdomains,
-    deliverables.entry_points,
-    deliverables.login_surfaces,
-    deliverables.admin_surfaces,
-    deliverables.api_endpoints,
-    deliverables.javascript_routes,
-    deliverables.third_party_integrations,
-    deliverables.storage_exposures,
-    deliverables.cloud_platform_hints,
-    deliverables.kubernetes_hints,
-    deliverables.cloud_boundaries,
-    ...deliverables.surface_clusters.map((cluster) => cluster.items),
-    deliverables.trust_boundaries,
-    deliverables.next_actions,
+    deliverables.domains ?? [],
+    deliverables.subdomains ?? [],
+    deliverables.entry_points ?? [],
+    deliverables.login_surfaces ?? [],
+    deliverables.admin_surfaces ?? [],
+    deliverables.api_endpoints ?? [],
+    deliverables.javascript_routes ?? [],
+    deliverables.third_party_integrations ?? [],
+    deliverables.storage_exposures ?? [],
+    deliverables.cloud_platform_hints ?? [],
+    deliverables.kubernetes_hints ?? [],
+    deliverables.cloud_boundaries ?? [],
+    ...(deliverables.surface_clusters ?? []).map((cluster) => cluster.items ?? []),
+    deliverables.trust_boundaries ?? [],
+    deliverables.next_actions ?? [],
   ].some((items) => items.length > 0)
 }
 
-function DeliverableSection({ label, items }: { label: string; items: ReconDeliverableItem[] }) {
-  if (items.length === 0) return null
+function DeliverableSection({ label, items }: { label: string; items?: ReconDeliverableItem[] }) {
+  const safeItems = items ?? []
+  if (safeItems.length === 0) return null
 
   return (
     <div className="border border-white/10 bg-[#0d0d0d] p-3">
       <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">{label}</div>
       <div className="space-y-2 text-[12px] leading-6 text-white/68">
-        {items.slice(0, 8).map((item) => (
+        {safeItems.slice(0, 8).map((item) => (
           <div key={`${label}-${item.value}`} className="flex items-start justify-between gap-3">
             <span className="min-w-0 break-all">{item.value}</span>
             <span className="shrink-0 text-[10px] uppercase tracking-[0.18em] text-white/38">{item.confidence}</span>
@@ -205,7 +206,7 @@ export function SummaryPanel({ run, report }: { run: RunRecord; report: StableRu
             <DeliverableSection label="Cloud platform hints" items={report.recon_deliverables.cloud_platform_hints} />
             <DeliverableSection label="Kubernetes hints" items={report.recon_deliverables.kubernetes_hints} />
             <DeliverableSection label="Cloud boundaries" items={report.recon_deliverables.cloud_boundaries} />
-            {report.recon_deliverables.surface_clusters.map((cluster) => (
+            {(report.recon_deliverables.surface_clusters ?? []).map((cluster) => (
               <DeliverableSection key={cluster.label} label={cluster.label} items={cluster.items} />
             ))}
             <DeliverableSection label="Trust boundaries" items={report.recon_deliverables.trust_boundaries} />

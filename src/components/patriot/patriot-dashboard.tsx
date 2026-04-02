@@ -2211,20 +2211,20 @@ function SummaryPanel({
           <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Recon Deliverables</div>
           <div className="grid gap-3 md:grid-cols-2">
             {[
-              { label: "Domains", items: reconDeliverables.domains },
-              { label: "Subdomains", items: reconDeliverables.subdomains },
-              { label: "Entry points", items: reconDeliverables.entry_points },
-              { label: "Login surfaces", items: reconDeliverables.login_surfaces },
-              { label: "Admin surfaces", items: reconDeliverables.admin_surfaces },
-              { label: "API endpoints", items: reconDeliverables.api_endpoints },
-              { label: "JavaScript routes", items: reconDeliverables.javascript_routes },
-              { label: "Integrations", items: reconDeliverables.third_party_integrations },
-              { label: "Storage exposure", items: reconDeliverables.storage_exposures },
-              { label: "Cloud platform hints", items: reconDeliverables.cloud_platform_hints },
-              { label: "Kubernetes hints", items: reconDeliverables.kubernetes_hints },
-              { label: "Cloud boundaries", items: reconDeliverables.cloud_boundaries },
-              { label: "Trust boundaries", items: reconDeliverables.trust_boundaries },
-              ...reconDeliverables.surface_clusters.map((cluster) => ({ label: cluster.label, items: cluster.items })),
+              { label: "Domains", items: reconDeliverables.domains ?? [] },
+              { label: "Subdomains", items: reconDeliverables.subdomains ?? [] },
+              { label: "Entry points", items: reconDeliverables.entry_points ?? [] },
+              { label: "Login surfaces", items: reconDeliverables.login_surfaces ?? [] },
+              { label: "Admin surfaces", items: reconDeliverables.admin_surfaces ?? [] },
+              { label: "API endpoints", items: reconDeliverables.api_endpoints ?? [] },
+              { label: "JavaScript routes", items: reconDeliverables.javascript_routes ?? [] },
+              { label: "Integrations", items: reconDeliverables.third_party_integrations ?? [] },
+              { label: "Storage exposure", items: reconDeliverables.storage_exposures ?? [] },
+              { label: "Cloud platform hints", items: reconDeliverables.cloud_platform_hints ?? [] },
+              { label: "Kubernetes hints", items: reconDeliverables.kubernetes_hints ?? [] },
+              { label: "Cloud boundaries", items: reconDeliverables.cloud_boundaries ?? [] },
+              { label: "Trust boundaries", items: reconDeliverables.trust_boundaries ?? [] },
+              ...(reconDeliverables.surface_clusters ?? []).map((cluster) => ({ label: cluster.label, items: cluster.items ?? [] })),
             ].map(({ label, items }) =>
               items.length > 0 ? (
                 <div key={label} className="border border-white/10 bg-[#101010] p-3">

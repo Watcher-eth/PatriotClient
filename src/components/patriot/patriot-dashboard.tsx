@@ -799,7 +799,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
   })
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setShowIntro(false), 3600)
+    const timer = window.setTimeout(() => setShowIntro(false), 2100)
     return () => window.clearTimeout(timer)
   }, [])
 

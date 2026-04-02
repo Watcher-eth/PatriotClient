@@ -44,7 +44,7 @@ export function PatriotRouteTransition({ children, routeKey }: PatriotRouteTrans
             animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
             exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -18, scale: 1.01 }}
             transition={{
-              duration: prefersReducedMotion ? 0.16 : 0.46,
+              duration: prefersReducedMotion ? 0.12 : 0.28,
               ease: prefersReducedMotion ? "easeOut" : pageEase,
             }}
             className="min-h-screen will-change-transform"
@@ -60,7 +60,7 @@ export function PatriotRouteTransition({ children, routeKey }: PatriotRouteTrans
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: prefersReducedMotion ? 0.12 : 0.22, ease: "easeOut" }}
+              transition={{ duration: prefersReducedMotion ? 0.1 : 0.14, ease: "easeOut" }}
               className="pointer-events-none fixed inset-0 z-[120]"
             >
               <motion.div
@@ -69,7 +69,7 @@ export function PatriotRouteTransition({ children, routeKey }: PatriotRouteTrans
                 initial={prefersReducedMotion ? undefined : { scale: 1.02 }}
                 animate={prefersReducedMotion ? undefined : { scale: 1 }}
                 exit={prefersReducedMotion ? undefined : { scale: 0.995 }}
-                transition={{ duration: 0.35, ease: pageEase }}
+                transition={{ duration: 0.2, ease: pageEase }}
               />
               <motion.div
                 aria-hidden
@@ -77,7 +77,7 @@ export function PatriotRouteTransition({ children, routeKey }: PatriotRouteTrans
                 initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scaleX: 0.35 }}
                 animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scaleX: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: prefersReducedMotion ? 0.12 : 0.3, ease: pageEase }}
+                transition={{ duration: prefersReducedMotion ? 0.1 : 0.18, ease: pageEase }}
               />
             </motion.div>
           ) : null}

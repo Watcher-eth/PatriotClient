@@ -1,7 +1,7 @@
 import { useRouter } from "next/router"
 
 import { PatriotPageHead } from "@/components/patriot/patriot-page-head"
-import { PatriotSessionDetailPage } from "@/components/patriot/patriot-session-detail-page"
+import { PatriotDashboard } from "@/components/patriot/patriot-dashboard"
 
 export default function SessionDetailRoute() {
   const router = useRouter()
@@ -14,10 +14,16 @@ export default function SessionDetailRoute() {
     <>
       <PatriotPageHead
         title={`Session ${shortId}`}
-        description="Review Patriot session state, operator messages, linked runs, and field worker readiness."
+        description="Continue a Patriot session with the full operator console, findings workspace, and session trace."
         path={`/session/${sessionId}`}
       />
-      <PatriotSessionDetailPage sessionId={sessionId} />
+      <PatriotDashboard
+        sessionId={sessionId}
+        onSessionChange={(nextSessionId) => {
+          if (nextSessionId === sessionId) return
+          void router.push(`/session/${nextSessionId}`)
+        }}
+      />
     </>
   )
 }

@@ -10,6 +10,14 @@ export type WorkerCapability =
   | "gateway_fingerprint"
   | "nmap_scan"
   | "local_network_context"
+  | "bluetooth_scan"
+  | "bluetooth_service_probe"
+  | "local_service_probe"
+  | "http_service_probe"
+  | "tls_service_probe"
+  | "network_change_monitor"
+  | "wifi_environment_scan"
+  | "subnet_host_probe"
 
 export type WorkerAdapterKind = "desktop" | "mobile" | "hardware" | "cloud"
 export type WorkerAdapterPlatformFamily = "desktop" | "mobile" | "hardware" | "cloud"
@@ -17,6 +25,22 @@ export type WorkerSetupMethod = "native_pairing" | "deep_link" | "installer" | "
 export type WorkerAdapterHealth = "healthy" | "degraded" | "blocked"
 export type WorkerCapabilityState = "detected" | "available" | "missing" | "degraded" | "requires_permission"
 export type WorkerToolState = "available" | "missing" | "degraded" | "requires_permission"
+export type WorkerPermissionState =
+  | "granted"
+  | "denied"
+  | "not_determined"
+  | "requires_foreground"
+  | "unavailable"
+export type WorkerPermissionId =
+  | "local_network"
+  | "bluetooth"
+  | "bluetooth_scan"
+  | "location"
+  | "wifi_state"
+  | "nearby_devices"
+  | "background_execution"
+export type WorkerRadioFamily = "lan" | "bluetooth" | "wifi" | "system"
+export type WorkerPowerCost = "low" | "medium" | "high"
 export type WorkerSetupOption = {
   kind: "desktop" | "mobile" | "hardware" | "script"
   label: string
@@ -32,6 +56,9 @@ export type WorkerAdapterCapabilityRecord = {
   evidence?: string[]
   missingDependencies?: string[]
   collectionModes?: Array<"passive" | "active" | "mixed">
+  requiresForeground?: boolean
+  powerCost?: WorkerPowerCost
+  radioFamily?: WorkerRadioFamily
 }
 
 export type WorkerToolInventoryRecord = {
@@ -41,6 +68,13 @@ export type WorkerToolInventoryRecord = {
   version?: string
   evidence?: string[]
   missingDependencies?: string[]
+}
+
+export type WorkerPermissionRecord = {
+  permission: WorkerPermissionId
+  state: WorkerPermissionState
+  lastCheckedAt: string
+  details?: string[]
 }
 
 export type WorkerAdapterRecord = {
@@ -79,6 +113,12 @@ export const MOBILE_FIELD_SENSOR_CAPABILITIES: WorkerCapability[] = [
   "local_network_context",
   "bonjour_mdns_scan",
   "gateway_fingerprint",
+  "bluetooth_scan",
+  "bluetooth_service_probe",
+  "local_service_probe",
+  "http_service_probe",
+  "tls_service_probe",
+  "network_change_monitor",
 ]
 
 export function hasRequiredCapabilities(
@@ -225,6 +265,7 @@ export type WorkerRecord = {
   adapter?: WorkerAdapterRecord
   capabilityInventory?: WorkerAdapterCapabilityRecord[]
   toolInventory?: WorkerToolInventoryRecord[]
+  permissionInventory?: WorkerPermissionRecord[]
   tailscaleIp?: string
   labels?: string[]
   artifactRoot?: string
@@ -356,6 +397,99 @@ export type FieldSensorBootstrapStatusRecord = {
   workerVersion?: string
 }
 
+export type MobileProbeKind =
+  | "collect_network_context"
+  | "browse_mdns_services"
+  | "probe_gateway_identity"
+  | "scan_ble_devices"
+  | "probe_ble_services"
+  | "tcp_connect_probe"
+  | "http_probe"
+  | "tls_probe"
+  | "android_wifi_scan"
+  | "android_subnet_sweep"
+
+export type FieldSensorCommandJobRequest = {
+  kind: "command"
+  workerId: string
+  bin: string
+  args: string[]
+  timeoutMs?: number
+  cwd?: string
+  env?: Record<string, string>
+  runId?: string
+}
+
+export type FieldSensorProbeJobRequest = {
+  kind: "probe"
+  workerId: string
+  probe: MobileProbeKind
+  params?: Record<string, unknown>
+  timeoutMs?: number
+  runId?: string
+}
+
+export type FieldSensorJobRequest = FieldSensorCommandJobRequest | FieldSensorProbeJobRequest
+
+export type FieldSensorCommandResult = {
+  kind: "command"
+  ok: boolean
+  bin: string
+  args: string[]
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  startedAt: number
+  endedAt: number
+  timedOut: boolean
+}
+
+export type FieldSensorProbeResult = {
+  kind: "probe"
+  ok: boolean
+  probe: MobileProbeKind
+  observedAt: string
+  target?: string
+  summary?: Record<string, unknown>
+  data?: Record<string, unknown>
+  confidence?: "low" | "medium" | "high"
+  collectionMode?: "passive" | "active" | "mixed"
+  degradedReasons?: string[]
+  artifacts?: Array<{
+    kind: "report" | "output" | "asset" | "finding" | "evidence"
+    label: string
+    payload: Record<string, unknown>
+  }>
+  execution?: {
+    startedAt: number
+    endedAt: number
+    timedOut: boolean
+  }
+}
+
+export type FieldSensorJobResult = FieldSensorCommandResult | FieldSensorProbeResult
+
+export type FieldSensorJobRecord = {
+  id: string
+  workerId: string
+  kind: FieldSensorJobRequest["kind"]
+  status: "pending" | "running" | "completed" | "failed"
+  timeoutMs: number
+  bin?: string
+  args?: string[]
+  cwd?: string
+  env?: Record<string, string>
+  probe?: MobileProbeKind
+  params?: Record<string, unknown>
+  runId?: string
+  createdAt: string
+  updatedAt: string
+  claimedAt?: string
+  completedAt?: string
+  error?: string
+  result?: FieldSensorJobResult
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "")
 }
@@ -392,6 +526,10 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   if (!response.ok) {
     const body = await response.text()
     throw new Error(body || `Request failed with status ${response.status}`)
+  }
+
+  if (response.status === 204) {
+    return null as T
   }
 
   return (await response.json()) as T
@@ -459,6 +597,22 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
     getRunArtifacts: (runId: string) => request<{ artifacts: ArtifactRecord[] }>(resolvedBase, `/v1/runs/${runId}/artifacts`),
     getRunReport: (runId: string) => request<StableRunReport>(resolvedBase, `/v1/runs/${runId}/report`),
     getRunTimeline: (runId: string) => request<{ events: TimelineEvent[] }>(resolvedBase, `/v1/runs/${runId}/timeline`),
+    getFieldSensorJob: (jobId: string) => request<FieldSensorJobRecord>(resolvedBase, `/v1/field-sensors/jobs/${jobId}`),
+    createFieldSensorJob: (body: FieldSensorJobRequest) =>
+      request<FieldSensorJobRecord>(resolvedBase, "/v1/field-sensors/jobs", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    claimFieldSensorJob: (workerId: string) =>
+      request<FieldSensorJobRecord | null>(resolvedBase, "/v1/field-sensors/jobs/claim", {
+        method: "POST",
+        body: JSON.stringify({ workerId }),
+      }),
+    completeFieldSensorJob: (jobId: string, body: { ok: boolean; result?: FieldSensorJobResult; error?: string }) =>
+      request<FieldSensorJobRecord>(resolvedBase, `/v1/field-sensors/jobs/${jobId}/complete`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     getRunAssignments: (runId: string) =>
       request<{ assignments: RunAssignmentRecord[] }>(resolvedBase, `/v1/runs/${runId}/assignments`),
     stopRun: (runId: string) =>

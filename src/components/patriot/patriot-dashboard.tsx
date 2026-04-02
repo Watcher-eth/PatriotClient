@@ -63,6 +63,8 @@ const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
   { id: "artifacts", label: "Artifacts", icon: FolderArchive },
 ]
 
+const EMPTY_RUNS: RunRecord[] = []
+
 type OperatorRunProfile = "recon" | "redteam"
 type OperatorModel = "claude-sonnet-4-6" | "claude-opus-4-6"
 type OperatorWorkerSelection = "auto" | string
@@ -409,18 +411,25 @@ function getTraceToolSignature(event: TimelineEvent) {
   )
   const payload = event.sourceEventType === "tool.result" ? getToolResultPayload(event) : null
   const target = getToolTarget(event, payload) ?? ""
-  return `${toolName}::${target}`
+  return `${event.runId}::${toolName}::${target}`
 }
 
-export function PatriotDashboard() {
+type PatriotDashboardProps = {
+  sessionId?: string
+  onSessionChange?: (sessionId: string) => void
+}
+
+export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }: PatriotDashboardProps = {}) {
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatContentRef = useRef<HTMLDivElement | null>(null)
   const shouldStickChatToBottomRef = useRef(true)
   const shouldUseInstantChatScrollRef = useRef(true)
+  const selectedRunIdRef = useRef<string | null>(null)
+  const traceSessionIdRef = useRef<string | null>(null)
   const [showIntro, setShowIntro] = useState(true)
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [workers, setWorkers] = useState<WorkerRecord[]>([])
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(routeSessionId ?? null)
   const deferredSessionId = useDeferredValue(selectedSessionId)
   const [sessionState, setSessionState] = useState<SessionStateResponse | null>(null)
   const [messages, setMessages] = useState<SessionMessageRecord[]>([])
@@ -446,7 +455,12 @@ export function PatriotDashboard() {
   })
 
   const currentSession = sessionState?.session ?? sessions.find((item) => item.id === selectedSessionId) ?? null
-  const runs = sessionState?.runs ?? []
+  const runs = sessionState?.runs ?? EMPTY_RUNS
+  const orderedSessionRuns = useMemo(
+    () => runs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    [runs],
+  )
+  const orderedSessionRunIds = useMemo(() => orderedSessionRuns.map((run) => run.id), [orderedSessionRuns])
   const selectedRun =
     runs.find((run) => run.id === selectedRunId) ??
     runs.find((run) => run.id === currentSession?.currentRunId) ??
@@ -539,7 +553,7 @@ export function PatriotDashboard() {
     const response = await patriotApi.listSessions()
     startTransition(() => {
       setSessions(response.sessions)
-      if (!selectedSessionId && response.sessions.length > 0) setSelectedSessionId(response.sessions[0]!.id)
+      if (!selectedSessionId && !routeSessionId && response.sessions.length > 0) setSelectedSessionId(response.sessions[0]!.id)
     })
   }
 
@@ -646,6 +660,20 @@ export function PatriotDashboard() {
   }, [])
 
   useEffect(() => {
+    if (!routeSessionId) return
+    startTransition(() => {
+      setSelectedSessionId(routeSessionId)
+      setSelectedRunId(null)
+      setSessionState(null)
+      setMessages([])
+      setTimelineEvents([])
+      setArtifacts([])
+      setRunAssignments([])
+      setError(null)
+    })
+  }, [routeSessionId])
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       void refreshWorkers()
       if (selectedSessionId) void refreshSession(selectedSessionId)
@@ -658,6 +686,10 @@ export function PatriotDashboard() {
     if (!deferredSessionId) return
     void refreshSession(deferredSessionId)
   }, [deferredSessionId])
+
+  useEffect(() => {
+    selectedRunIdRef.current = selectedRunId
+  }, [selectedRunId])
 
   useEffect(() => {
     if (!pendingLocalBootstrap?.token) {
@@ -701,40 +733,79 @@ export function PatriotDashboard() {
 
   useEffect(() => {
     if (!selectedRunId) {
-      setTimelineEvents([])
       setArtifacts([])
       setRunAssignments([])
       return
     }
 
-    let closed = false
-    setTimelineEvents([])
     void refreshRunArtifacts(selectedRunId)
     void refreshRunAssignments(selectedRunId)
+  }, [selectedRunId])
 
-    const source = createTimelineEventSource(selectedRunId)
-    source.onmessage = (event) => {
-      if (closed) return
+  useEffect(() => {
+    const activeSessionId = deferredSessionId ?? selectedSessionId
+    const runIds = orderedSessionRunIds
+
+    if (!activeSessionId) {
+      traceSessionIdRef.current = null
+      setTimelineEvents([])
+      return
+    }
+
+    if (traceSessionIdRef.current !== activeSessionId) {
+      traceSessionIdRef.current = activeSessionId
+      startTransition(() => setTimelineEvents([]))
+    }
+
+    if (runIds.length === 0) {
+      startTransition(() => setTimelineEvents([]))
+      return
+    }
+
+    let closed = false
+
+    const loadTimelines = async () => {
       try {
-        const payload = JSON.parse(event.data) as TimelineEvent
-        startTransition(() => setTimelineEvents((current) => mergeTimelineEvents(current, [payload])))
-        if (payload.kind === "status" && ["complete", "failed"].includes(payload.status ?? "")) {
-          const activeSessionId = deferredSessionId ?? selectedSessionId
-          if (activeSessionId) void refreshSession(activeSessionId)
-          void refreshRunArtifacts(selectedRunId)
-          void refreshRunAssignments(selectedRunId)
-        }
-      } catch {
-        // Ignore malformed timeline frames.
+        const responses = await Promise.all(runIds.map((runId) => patriotApi.getRunTimeline(runId)))
+        if (closed) return
+        const merged = mergeTimelineEvents([], responses.flatMap((response) => response.events))
+        startTransition(() => {
+          setTimelineEvents((current) => mergeTimelineEvents(current.filter((event) => runIds.includes(event.runId)), merged))
+        })
+      } catch (err) {
+        if (!closed) setError(err instanceof Error ? err.message : String(err))
       }
     }
-    source.onerror = () => source.close()
+
+    void loadTimelines()
+
+    const sources = runIds.map((runId) => {
+      const source = createTimelineEventSource(runId)
+      source.onmessage = (event) => {
+        if (closed) return
+        try {
+          const payload = JSON.parse(event.data) as TimelineEvent
+          startTransition(() => setTimelineEvents((current) => mergeTimelineEvents(current, [payload])))
+          if (payload.kind === "status" && ["complete", "failed"].includes(payload.status ?? "")) {
+            if (activeSessionId) void refreshSession(activeSessionId)
+            if (selectedRunIdRef.current === payload.runId) {
+              void refreshRunArtifacts(payload.runId)
+              void refreshRunAssignments(payload.runId)
+            }
+          }
+        } catch {
+          // Ignore malformed timeline frames.
+        }
+      }
+      source.onerror = () => source.close()
+      return source
+    })
 
     return () => {
       closed = true
-      source.close()
+      for (const source of sources) source.close()
     }
-  }, [deferredSessionId, selectedRunId, selectedSessionId])
+  }, [deferredSessionId, orderedSessionRunIds, selectedSessionId])
 
   const createSession = async () => {
     setIsCreatingSession(true)
@@ -752,6 +823,7 @@ export function PatriotDashboard() {
         setSelectedRunId(null)
         setDraft("")
       })
+      onSessionChange?.(session.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -771,6 +843,7 @@ export function PatriotDashboard() {
     startTransition(() => {
       setSelectedSessionId(session.id)
     })
+    onSessionChange?.(session.id)
     return session.id
   }
 
@@ -795,7 +868,6 @@ export function PatriotDashboard() {
       if (result.run) {
         startTransition(() => {
           setSelectedRunId(result.run?.id ?? null)
-          setTimelineEvents([])
         })
       }
       await loadSessionState(sessionId)
@@ -831,7 +903,6 @@ export function PatriotDashboard() {
       })
       startTransition(() => {
         setSelectedRunId(run.id)
-        setTimelineEvents([])
       })
       await loadSessionState(selectedSessionId)
     } catch (err) {
@@ -845,9 +916,10 @@ export function PatriotDashboard() {
     const visibleTimelineEvents = timelineEvents.filter((event) => event.kind !== "artifact")
     return {
       visibleTimelineEvents,
-      hasTrace: Boolean(selectedRun) || visibleTimelineEvents.length > 0,
+      orderedSessionRuns,
+      hasTrace: orderedSessionRuns.length > 0 || visibleTimelineEvents.length > 0,
     }
-  }, [selectedRun, timelineEvents])
+  }, [orderedSessionRuns, timelineEvents])
   const tabCounts = useMemo<Record<ViewTab, number>>(
     () => ({
       summary: runs.length,
@@ -1011,7 +1083,7 @@ export function PatriotDashboard() {
             ) : (
               <div ref={chatContentRef} className="space-y-4">
                 {visibleMessages.length === 0 && !traceState.hasTrace ? (
-                  <EmptyChatState copy="Create a session and send a recon prompt to start collecting trace data and reports." />
+                  <EmptyChatState copy="Ready for Deployment - Send a request to start Patriot" />
                 ) : null}
 
                 {visibleMessages.map((message) =>
@@ -1055,9 +1127,10 @@ export function PatriotDashboard() {
 
                 {traceState.hasTrace ? (
                   <TraceTerminalStream
-                    run={selectedRun}
+                    runs={traceState.orderedSessionRuns}
+                    selectedRunId={selectedRun?.id ?? null}
                     timelineEvents={traceState.visibleTimelineEvents}
-                    isActive={selectedRun?.status === "running"}
+                    activeRunId={selectedRun?.status === "running" ? selectedRun.id : null}
                   />
                 ) : null}
               </div>
@@ -1515,13 +1588,15 @@ function TerminalCursor() {
 }
 
 function TraceTerminalStream({
-  run,
+  runs,
+  selectedRunId,
   timelineEvents,
-  isActive,
+  activeRunId,
 }: {
-  run: RunRecord | null
+  runs: RunRecord[]
+  selectedRunId: string | null
   timelineEvents: TimelineEvent[]
-  isActive: boolean
+  activeRunId: string | null
 }) {
   const activeToolSignatures = useMemo(() => {
     const settled = new Set<string>()
@@ -1546,11 +1621,41 @@ function TraceTerminalStream({
     return active
   }, [timelineEvents])
 
+  const runGroups = useMemo(() => {
+    const groups: Array<{ run: RunRecord | null; events: TimelineEvent[] }> = []
+    const eventsByRunId = new Map<string, TimelineEvent[]>()
+    for (const event of timelineEvents) {
+      const group = eventsByRunId.get(event.runId) ?? []
+      group.push(event)
+      eventsByRunId.set(event.runId, group)
+    }
+
+    const orderedKnownRuns = runs.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+    const seenRunIds = new Set<string>()
+    for (const run of orderedKnownRuns) {
+      seenRunIds.add(run.id)
+      groups.push({
+        run,
+        events: eventsByRunId.get(run.id) ?? [],
+      })
+    }
+
+    for (const [runId, events] of eventsByRunId.entries()) {
+      if (seenRunIds.has(runId)) continue
+      groups.push({
+        run: null,
+        events,
+      })
+    }
+
+    return groups.filter((group) => group.run !== null || group.events.length > 0)
+  }, [runs, timelineEvents])
+
   return (
     <article className="mr-12 max-w-[92%] px-1 py-1 font-mono">
       <div className="mb-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.18em] text-white/38">
         <div>Agent trace</div>
-        {run ? <div>{run.id.slice(0, 8)} / {run.status}</div> : null}
+        {selectedRunId ? <div>Session trace / current {selectedRunId.slice(0, 8)}</div> : null}
       </div>
 
       {timelineEvents.length === 0 ? (
@@ -1560,77 +1665,104 @@ function TraceTerminalStream({
           className="text-[12px] leading-6 text-white/52"
         >
           Waiting for live trace events...
-          {isActive ? <TerminalCursor /> : null}
+          {activeRunId ? <TerminalCursor /> : null}
         </motion.div>
       ) : (
         <AnimatePresence initial={false}>
-          {timelineEvents.map((event, index) => {
-            const formatted = formatTraceEvent(event)
-            const isTool = event.kind === "tool"
-            const toolSignature = isTool ? getTraceToolSignature(event) : null
-            const isActiveTool =
-              toolSignature !== null &&
-              event.sourceEventType !== "tool.result" &&
-              activeToolSignatures.has(toolSignature)
-            const isLatest = event.id === timelineEvents.at(-1)?.id
-            const shouldAnimate = shouldAnimateConsoleEntryOnce(`trace:${event.id}`, event.ts)
+          {runGroups.map((group, groupIndex) => {
+            const groupRunId = group.run?.id ?? group.events[0]?.runId ?? `run-${groupIndex}`
+            const isCurrentRun = groupRunId === selectedRunId
+            const groupStatus = group.run?.status ?? "running"
 
             return (
               <motion.div
-                key={event.id}
+                key={groupRunId}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.16) }}
-                className="mb-3"
+                transition={{ duration: 0.18, delay: Math.min(groupIndex * 0.03, 0.18) }}
+                className="mb-5 border-l border-white/8 pl-3"
               >
-                <div className="flex items-start justify-between gap-3 text-[12px] leading-[1.5]">
-                  <div className="min-w-0 flex-1 text-white/72">
-                    {isActiveTool ? (
-                      <TextShimmer
-                        className="text-[12px]"
-                        style={
-                          {
-                            "--foreground": "rgb(255 255 255 / 0.9)",
-                            "--muted-foreground": "rgb(255 255 255 / 0.42)",
-                          } as CSSProperties
-                        }
-                      >
-                        {formatted.label}
-                      </TextShimmer>
-                    ) : (
-                      <span
-                        className={cn(
-                          shouldAnimate && "typewriter-label [white-space:pre-wrap]",
-                        )}
-                        style={shouldAnimate ? typewriterAnimationStyle(formatted.label) : undefined}
-                      >
-                        {formatted.label}
-                      </span>
-                    )}
-                    {isActive && isLatest ? <TerminalCursor /> : null}
-                  </div>
-
-                  <div className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
-                    {formatTime(event.ts)}
-                  </div>
+                <div
+                  className={cn(
+                    "mb-3 text-[10px] uppercase tracking-[0.18em]",
+                    isCurrentRun ? "text-white/72" : "text-white/34",
+                  )}
+                >
+                  Run {groupRunId.slice(0, 8)} / {groupStatus}
                 </div>
 
-                {formatted.facts.length > 0 ? (
-                  <div className="mt-2 space-y-1 border-l border-white/8 pl-3 text-[11px] leading-5 text-white/58">
-                    {formatted.facts.map((fact) => (
-                      <div
-                        key={`${event.id}-${fact}`}
-                        className={cn(
-                          shouldAnimate && "typewriter-label block max-w-full [white-space:pre-wrap]",
-                        )}
-                        style={shouldAnimate ? typewriterAnimationStyle(fact, 90) : undefined}
-                      >
-                        {fact}
+                {group.events.map((event, index) => {
+                  const formatted = formatTraceEvent(event)
+                  const isTool = event.kind === "tool"
+                  const toolSignature = isTool ? getTraceToolSignature(event) : null
+                  const isActiveTool =
+                    toolSignature !== null &&
+                    event.sourceEventType !== "tool.result" &&
+                    activeToolSignatures.has(toolSignature)
+                  const isLatest =
+                    event.id === timelineEvents.at(-1)?.id && groupRunId === activeRunId
+                  const shouldAnimate = shouldAnimateConsoleEntryOnce(`trace:${event.id}`, event.ts)
+
+                  return (
+                    <motion.div
+                      key={event.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.18, delay: Math.min(index * 0.02, 0.16) }}
+                      className="mb-3"
+                    >
+                      <div className="flex items-start justify-between gap-3 text-[12px] leading-[1.5]">
+                        <div className="min-w-0 flex-1 text-white/72">
+                          {isActiveTool ? (
+                            <TextShimmer
+                              className="text-[12px]"
+                              style={
+                                {
+                                  "--foreground": "rgb(255 255 255 / 0.9)",
+                                  "--muted-foreground": "rgb(255 255 255 / 0.42)",
+                                } as CSSProperties
+                              }
+                            >
+                              {formatted.label}
+                            </TextShimmer>
+                          ) : (
+                            <span
+                              className={cn(
+                                shouldAnimate && "typewriter-label [white-space:pre-wrap]",
+                              )}
+                              style={shouldAnimate ? typewriterAnimationStyle(formatted.label) : undefined}
+                            >
+                              {formatted.label}
+                            </span>
+                          )}
+                          {isLatest ? <TerminalCursor /> : null}
+                        </div>
+
+                        <div className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/32">
+                          {formatTime(event.ts)}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
+
+                      {formatted.facts.length > 0 ? (
+                        <div className="mt-2 space-y-1 border-l border-white/8 pl-3 text-[11px] leading-5 text-white/58">
+                          {formatted.facts.map((fact) => (
+                            <div
+                              key={`${event.id}-${fact}`}
+                              className={cn(
+                                shouldAnimate && "typewriter-label block max-w-full [white-space:pre-wrap]",
+                              )}
+                              style={shouldAnimate ? typewriterAnimationStyle(fact, 90) : undefined}
+                            >
+                              {fact}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </motion.div>
+                  )
+                })}
               </motion.div>
             )
           })}
@@ -1691,6 +1823,30 @@ function SummaryPanel({
         .map((assignment) => assignment.workerId),
     )
   }, [rightRailStage, runAssignments])
+  const connectedSessionWorkers = useMemo(() => {
+    const workerIds = new Set<string>()
+
+    for (const run of sessionState?.runs ?? EMPTY_RUNS) {
+      if (run.workerId) workerIds.add(run.workerId)
+    }
+
+    for (const assignment of runAssignments) {
+      if (assignment.workerId) workerIds.add(assignment.workerId)
+    }
+
+    for (const entry of sessionState?.report.tool_evidence ?? []) {
+      if (entry.source_worker_id) workerIds.add(entry.source_worker_id)
+    }
+
+    const preferredFieldWorkerId =
+      sessionState?.session.metadata &&
+      typeof sessionState.session.metadata.field_sensor_worker_id === "string"
+        ? sessionState.session.metadata.field_sensor_worker_id
+        : null
+    if (preferredFieldWorkerId) workerIds.add(preferredFieldWorkerId)
+
+    return workers.filter((worker) => workerIds.has(worker.id))
+  }, [runAssignments, sessionState, workers])
   const narrative = sessionState?.report.narrative.summary?.trim() ?? ""
   const hasNarrative = narrative.length > 0
   const shouldShowNarrative =
@@ -1795,9 +1951,9 @@ function SummaryPanel({
 
       <motion.section layout className="space-y-3 pb-4">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>
-        {workers.length > 0 ? (
+        {connectedSessionWorkers.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">
-            {workers.map((worker) => (
+            {connectedSessionWorkers.map((worker) => (
               <motion.article key={worker.id} layout className="border border-white/10 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1829,7 +1985,7 @@ function SummaryPanel({
             ))}
           </div>
         ) : (
-          <EmptyPanel copy="Worker inventory will appear once Patriot can see connected workers." />
+          <EmptyPanel copy="Only workers that actually participated in this session will appear here." />
         )}
       </motion.section>
     </div>

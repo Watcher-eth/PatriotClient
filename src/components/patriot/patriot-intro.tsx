@@ -1,5 +1,7 @@
-import { type CSSProperties, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "motion/react"
+
+import { TypewriterText } from "@/components/patriot/patriot-typewriter-text"
 
 type PatriotIntroProps = {
   visible: boolean
@@ -41,8 +43,6 @@ function TypewriterLabel({
   delay: number
   label: string
 }) {
-  const typingDuration = Math.min(Math.max(label.length * 0.04, 0.48), 0.72)
-
   return (
     <motion.div
       initial={{ opacity: 0, y: className.includes("bottom") ? 10 : -10 }}
@@ -50,21 +50,11 @@ function TypewriterLabel({
       transition={{ delay, duration: 0.24, ease: "easeOut" }}
       className={`absolute font-mono text-[11px] uppercase tracking-[0.24em] text-white/72 ${className}`}
     >
-      <span
-        className="typewriter-label"
-        style={
-          {
-            width: `${label.length}ch`,
-            animation: [
-              `typewriter-reveal ${typingDuration}s steps(${label.length}, end) ${delay}s forwards`,
-              `typewriter-caret 0.75s step-end ${delay}s infinite`,
-              `typewriter-caret-hide 0.01s linear ${delay + typingDuration}s forwards`,
-            ].join(", "),
-          } as CSSProperties
-        }
-      >
-        {label}
-      </span>
+      <TypewriterText
+        text={label}
+        delayMs={delay * 1000}
+        durationMs={Math.round(Math.min(Math.max(label.length * 40, 480), 720))}
+      />
     </motion.div>
   )
 }
@@ -103,7 +93,7 @@ export function PatriotIntro({ visible }: PatriotIntroProps) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.45, ease: "easeInOut" }}
-          className="pointer-events-auto absolute inset-0 z-50 overflow-hidden bg-[#050505]"
+          className="pointer-events-auto absolute inset-0 z-50 overflow-hidden bg-[#101010]"
         >
           {cornerLabels.map((item) => (
             <TypewriterLabel

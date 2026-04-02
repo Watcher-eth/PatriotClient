@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 type PatriotHeaderProps = {
   active?: "console" | "sessions" | "reports"
   status?: "active" | "inactive"
+  statusSlot?: ReactNode
   settingsSlot?: ReactNode
 }
 
@@ -56,7 +57,7 @@ export function ActivityStatusBadge({
   )
 }
 
-export function PatriotHeader({ active = "console", status = "inactive", settingsSlot }: PatriotHeaderProps) {
+export function PatriotHeader({ active = "console", status = "inactive", statusSlot, settingsSlot }: PatriotHeaderProps) {
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
@@ -98,7 +99,7 @@ export function PatriotHeader({ active = "console", status = "inactive", setting
       </nav>
 
       <div className="flex min-w-0 flex-1 items-center justify-end gap-4">
-        <ActivityStatusBadge status={status} />
+        {statusSlot ?? <ActivityStatusBadge status={status} />}
         {settingsSlot ?? (
           <button type="button" className="text-white/45 hover:text-white">
             <Settings size={18} />

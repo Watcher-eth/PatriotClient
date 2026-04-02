@@ -234,11 +234,32 @@ export type AssessmentRecord = {
   coverage_summary: string
 }
 
+export type PreflightCheck = {
+  name: string
+  critical: boolean
+  available: boolean
+  detail?: string
+}
+
+export type PreflightRecord = {
+  status: "not_run" | "passed" | "warning" | "failed"
+  critical_failures: PreflightCheck[]
+  optional_failures: PreflightCheck[]
+  dependency_checks: PreflightCheck[]
+  probe_checks: PreflightCheck[]
+  summary: string
+}
+
 export type ReconDeliverableItem = {
   value: string
   confidence: "confirmed" | "inferred"
   evidence_refs: string[]
   notes?: string
+}
+
+export type SurfaceCluster = {
+  label: string
+  items: ReconDeliverableItem[]
 }
 
 export type ReconDeliverables = {
@@ -251,6 +272,7 @@ export type ReconDeliverables = {
   javascript_routes: ReconDeliverableItem[]
   third_party_integrations: ReconDeliverableItem[]
   storage_exposures: ReconDeliverableItem[]
+  surface_clusters: SurfaceCluster[]
   trust_boundaries: ReconDeliverableItem[]
   next_actions: ReconDeliverableItem[]
 }
@@ -365,6 +387,8 @@ export type StableRunReport = {
     error?: string
   }>
   assessment: AssessmentRecord
+  preflight: PreflightRecord
+  coverage_debt: string[]
   recon_deliverables: ReconDeliverables
   assets: AssetRecord[]
   findings: FindingRecord[]
@@ -376,6 +400,8 @@ export type StableSessionReport = {
   schema_version: "patriot.session.v1"
   narrative: { summary: string }
   assessment: AssessmentRecord
+  preflight: PreflightRecord
+  coverage_debt: string[]
   recon_deliverables: ReconDeliverables
   assets: AssetRecord[]
   findings: FindingRecord[]

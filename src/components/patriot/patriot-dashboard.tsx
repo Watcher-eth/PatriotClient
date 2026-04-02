@@ -28,8 +28,10 @@ import { AnimatePresence, motion } from "motion/react"
 
 import { ActivityStatusBadge, PatriotHeader } from "@/components/patriot/patriot-header"
 import { PatriotIntro } from "@/components/patriot/patriot-intro"
+import { TypewriterText } from "@/components/patriot/patriot-typewriter-text"
 import { TextShimmer } from "@/components/prompt-kit/text-shimmer"
 import { Button } from "@/components/ui/button"
+import { TodoMark, type TodoStatus } from "@/components/ui/todo-mark"
 import { cn } from "@/lib/utils"
 import {
   createTimelineEventSource,
@@ -54,6 +56,12 @@ import {
 
 type ViewTab = "summary" | "findings" | "assets" | "evidence" | "artifacts"
 type RightRailStage = "pre" | "during" | "after"
+type NextActionTodo = {
+  id: string
+  label: string
+  status: TodoStatus
+  meta?: string
+}
 
 const tabs: Array<{ id: ViewTab; label: string; icon: typeof FileStack }> = [
   { id: "summary", label: "Summary", icon: FileStack },
@@ -168,20 +176,6 @@ function shouldAnimateConsoleEntryOnce(key: string, at?: string) {
   return Date.now() - timestamp < CONSOLE_ANIMATION_FRESHNESS_MS
 }
 
-function typewriterAnimationStyle(text: string, delayMs = 0) {
-  const steps = Math.max(1, Math.min(text.length || 1, 160))
-  const durationMs = Math.max(180, Math.min(1400, steps * 18))
-  const caretLoops = Math.max(1, Math.ceil(durationMs / 520))
-
-  return {
-    animation: [
-      `typewriter-reveal ${durationMs}ms steps(${steps}, end) ${delayMs}ms 1 both`,
-      `typewriter-caret 520ms steps(1, end) ${delayMs}ms ${caretLoops} both`,
-      `typewriter-caret-hide 1ms linear ${delayMs + durationMs}ms 1 forwards`,
-    ].join(", "),
-  } as const
-}
-
 function runStatusTone(status?: RunRecord["status"]) {
   switch (status) {
     case "running":
@@ -212,23 +206,141 @@ function severityTone(severity: FindingRecord["severity"]) {
   }
 }
 
-function assessmentBadgeTone(status?: SessionStateResponse["report"]["assessment"]["status"]) {
-  switch (status) {
-    case "fulfilled":
-      return "border-[#17341f] bg-[#101b14] text-[#9fe8b0]"
-    case "invalid":
-      return "border-[#5a171d] bg-[#190d11] text-[#ffadb3]"
-    default:
-      return "border-[#4f4617] bg-[#17140d] text-[#f3dc7a]"
-  }
-}
-
 function coverageChecklistLabel(key: string) {
   return key.replace(/_/g, " ")
 }
 
+function hasAssessmentEvidence(report?: {
+  tool_evidence?: Array<unknown>
+  assets?: Array<unknown>
+  findings?: Array<unknown>
+}) {
+  return Boolean(
+    report &&
+      ((report.tool_evidence?.length ?? 0) > 0 || (report.assets?.length ?? 0) > 0 || (report.findings?.length ?? 0) > 0),
+  )
+}
+
+function hasReconDeliverablesContent(deliverables?: {
+  domains?: Array<unknown>
+  subdomains?: Array<unknown>
+  entry_points?: Array<unknown>
+  login_surfaces?: Array<unknown>
+  admin_surfaces?: Array<unknown>
+  api_endpoints?: Array<unknown>
+  javascript_routes?: Array<unknown>
+  third_party_integrations?: Array<unknown>
+  storage_exposures?: Array<unknown>
+  surface_clusters?: Array<{ items?: Array<unknown> }>
+  trust_boundaries?: Array<unknown>
+  next_actions?: Array<unknown>
+}) {
+  if (!deliverables) return false
+
+  return [
+    deliverables.domains,
+    deliverables.subdomains,
+    deliverables.entry_points,
+    deliverables.login_surfaces,
+    deliverables.admin_surfaces,
+    deliverables.api_endpoints,
+    deliverables.javascript_routes,
+    deliverables.third_party_integrations,
+    deliverables.storage_exposures,
+    ...(deliverables.surface_clusters?.map((cluster) => cluster.items) ?? []),
+    deliverables.trust_boundaries,
+    deliverables.next_actions,
+  ].some((items) => (items?.length ?? 0) > 0)
+}
+
 function compactToolName(tool: string) {
   return tool.split("__").filter(Boolean).at(-1) ?? tool
+}
+
+function humanizeTodoToken(value: string) {
+  return value.replace(/[_-]+/g, " ").trim()
+}
+
+function formatAssignmentTodoLabel(assignment: RunAssignmentRecord) {
+  const capability = humanizeTodoToken(assignment.capabilityFamily)
+  const targetCount = assignment.targetScope?.length ?? 0
+
+  const base =
+    assignment.kind === "discovery"
+      ? `Run ${capability} discovery`
+      : assignment.kind === "enrichment"
+        ? `Enrich ${capability} evidence`
+        : assignment.kind === "validation"
+          ? `Validate ${capability}`
+          : `Follow up on ${capability}`
+
+  if (targetCount === 1) {
+    return `${base} for ${assignment.targetScope[0]}`
+  }
+
+  if (targetCount > 1) {
+    return `${base} across ${targetCount} targets`
+  }
+
+  return base
+}
+
+function formatAssignmentTodoMeta(assignment: RunAssignmentRecord, workerName?: string) {
+  const details = [
+    workerName ? `${workerName}${assignment.adapterKind ? ` / ${assignment.adapterKind}` : ""}` : undefined,
+    assignment.notes?.[0],
+    assignment.error ? `Reason: ${assignment.error}` : undefined,
+  ].filter(Boolean)
+
+  return details.join(" / ")
+}
+
+function mapAssignmentStatusToTodoStatus(status: RunAssignmentRecord["status"]): TodoStatus {
+  switch (status) {
+    case "running":
+      return "running"
+    case "completed":
+      return "success"
+    case "failed":
+    case "skipped":
+      return "error"
+    default:
+      return "scheduled"
+  }
+}
+
+function latestSupervisorRequiredActions(timelineEvents: TimelineEvent[], runId?: string | null) {
+  for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+    const event = timelineEvents[index]
+    if (event.sourceEventType !== "supervisor.verdict") continue
+    if (runId && event.runId !== runId) continue
+
+    const requiredActions = Array.isArray(event.data?.required_actions)
+      ? event.data.required_actions.map((item) => String(item)).filter(Boolean)
+      : []
+
+    if (requiredActions.length === 0) continue
+
+    return {
+      verdict: typeof event.data?.verdict === "string" ? event.data.verdict : undefined,
+      requiredActions,
+    }
+  }
+
+  return null
+}
+
+function todoStatusTone(status: TodoStatus) {
+  switch (status) {
+    case "running":
+      return "text-sky-300"
+    case "success":
+      return "text-[#9fe8b0]"
+    case "error":
+      return "text-[#ffadb3]"
+    default:
+      return "text-white/38"
+  }
 }
 
 function setupOptionDescription(option: FieldSensorBootstrapInfo["setup"][number]) {
@@ -563,6 +675,14 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
   const isSetupReady =
     effectiveBootstrapStatus === "enrolled" || hasCompatibleReadyWorker
   const hasSetupFailed = effectiveBootstrapStatus === "expired"
+  const headerStatusSlot = routeSessionId ? (
+    <div className="min-w-0 max-w-[320px] text-right">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-white/35">Session ID</div>
+      <div className="truncate text-[11px] uppercase tracking-[0.16em] text-white/72" title={routeSessionId}>
+        {routeSessionId}
+      </div>
+    </div>
+  ) : null
 
   const syncSessionsList = async () => {
     const response = await patriotApi.listSessions()
@@ -1050,6 +1170,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
       <PatriotHeader
         active="console"
         status={isSelectedRunLive ? "active" : "inactive"}
+        statusSlot={headerStatusSlot}
         settingsSlot={
           <RunSettingsMenu
             settings={runSettings}
@@ -1263,6 +1384,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
                     runAssignments={runAssignments}
                     selectedRun={selectedRun}
                     rightRailStage={rightRailStage}
+                    timelineEvents={traceState.visibleTimelineEvents}
                   />
                 ) : null}
                 {activeTab === "findings" ? (
@@ -1408,16 +1530,15 @@ function AgentMessageCard({
         {lines.map((line, index) => {
           const displayLine = line || " "
           return (
-            <div
+            <TypewriterText
               key={`${role}-${messageId}-${index}`}
-              className={cn(
-                "text-[12px] leading-6 text-white/78",
-                shouldAnimate && "typewriter-label [white-space:pre-wrap]",
-              )}
-              style={shouldAnimate ? typewriterAnimationStyle(displayLine, Math.min(index * 90, 420)) : undefined}
+              text={displayLine}
+              animate={shouldAnimate}
+              delayMs={Math.min(index * 90, 420)}
+              className="block max-w-full text-[12px] leading-6 text-white/78"
+              caretClassName="bg-white/70"
             >
-              {displayLine}
-            </div>
+            </TypewriterText>
           )
         })}
       </div>
@@ -1743,14 +1864,12 @@ function TraceTerminalStream({
                               {formatted.label}
                             </TextShimmer>
                           ) : (
-                            <span
-                              className={cn(
-                                shouldAnimate && "typewriter-label [white-space:pre-wrap]",
-                              )}
-                              style={shouldAnimate ? typewriterAnimationStyle(formatted.label) : undefined}
-                            >
-                              {formatted.label}
-                            </span>
+                            <TypewriterText
+                              text={formatted.label}
+                              animate={shouldAnimate}
+                              className="max-w-full text-[12px]"
+                              caretClassName="bg-white/70"
+                            />
                           )}
                           {isLatest ? <TerminalCursor /> : null}
                         </div>
@@ -1763,15 +1882,15 @@ function TraceTerminalStream({
                       {formatted.facts.length > 0 ? (
                         <div className="mt-2 space-y-1 border-l border-white/8 pl-3 text-[11px] leading-5 text-white/58">
                           {formatted.facts.map((fact) => (
-                            <div
+                            <TypewriterText
                               key={`${event.id}-${fact}`}
-                              className={cn(
-                                shouldAnimate && "typewriter-label block max-w-full [white-space:pre-wrap]",
-                              )}
-                              style={shouldAnimate ? typewriterAnimationStyle(fact, 90) : undefined}
+                              text={fact}
+                              animate={shouldAnimate}
+                              delayMs={90}
+                              className="block max-w-full"
+                              caretClassName="bg-white/60"
                             >
-                              {fact}
-                            </div>
+                            </TypewriterText>
                           ))}
                         </div>
                       ) : null}
@@ -1805,12 +1924,14 @@ function SummaryPanel({
   runAssignments,
   selectedRun,
   rightRailStage,
+  timelineEvents,
 }: {
   sessionState: SessionStateResponse | null
   workers: WorkerRecord[]
   runAssignments: RunAssignmentRecord[]
   selectedRun: RunRecord | null
   rightRailStage: RightRailStage
+  timelineEvents: TimelineEvent[]
 }) {
   const orderedAssignments = useMemo(
     () =>
@@ -1866,12 +1987,55 @@ function SummaryPanel({
   const hasNarrative = narrative.length > 0
   const shouldShowNarrative =
     (selectedRun?.status === "completed" || selectedRun?.status === "failed") && hasNarrative
-  const assessment = sessionState?.report.assessment
-  const reconDeliverables = sessionState?.report.recon_deliverables
+  const showAssessment = hasAssessmentEvidence(sessionState?.report)
+  const assessment = showAssessment ? sessionState?.report.assessment : undefined
+  const reconDeliverables =
+    showAssessment && hasReconDeliverablesContent(sessionState?.report.recon_deliverables)
+      ? sessionState?.report.recon_deliverables
+      : undefined
+  const nextActionTodos = useMemo<NextActionTodo[]>(() => {
+    if (orderedAssignments.length > 0) {
+      return orderedAssignments.slice(0, 10).map((assignment) => {
+        const worker = workers.find((item) => item.id === assignment.workerId)
+        return {
+          id: assignment.id,
+          label: formatAssignmentTodoLabel(assignment),
+          status: mapAssignmentStatusToTodoStatus(assignment.status),
+          meta: formatAssignmentTodoMeta(assignment, worker?.name),
+        }
+      })
+    }
+
+    const requiredActionSnapshot = latestSupervisorRequiredActions(timelineEvents, selectedRun?.id ?? null)
+    if (requiredActionSnapshot) {
+      const fallbackStatus: TodoStatus =
+        selectedRun?.status === "failed" || selectedRun?.status === "stopped"
+          ? "error"
+          : requiredActionSnapshot.verdict === "stop" && selectedRun?.status === "completed"
+            ? "success"
+            : "scheduled"
+
+      return requiredActionSnapshot.requiredActions.slice(0, 10).map((action, index) => ({
+        id: `required-action-${selectedRun?.id ?? "session"}-${index}`,
+        label: action,
+        status: fallbackStatus,
+        meta: "Supervisor-required follow-up",
+      }))
+    }
+
+    return (reconDeliverables?.next_actions ?? []).slice(0, 10).map((item) => ({
+      id: `recommended-next-action-${item.value}`,
+      label: item.value,
+      status: "scheduled",
+      meta:
+        item.notes ??
+        (item.confidence === "confirmed" ? "Derived from confirmed evidence." : "Suggested from the current recon assessment."),
+    }))
+  }, [orderedAssignments, reconDeliverables?.next_actions, selectedRun?.id, selectedRun?.status, timelineEvents, workers])
 
   return (
-    <div className="space-y-6">
-      <motion.section layout className="space-y-3">
+    <div className="flex flex-col gap-6">
+      <motion.section layout className="order-1 space-y-3">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Execution phases</div>
         {orderedAssignments.length > 0 ? (
           <div className="space-y-2">
@@ -1955,7 +2119,7 @@ function SummaryPanel({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-            className="space-y-3"
+            className="order-2 space-y-3"
           >
             <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-white/45">
               <Play size={14} />
@@ -1967,18 +2131,8 @@ function SummaryPanel({
       </AnimatePresence>
 
       {assessment ? (
-        <motion.section layout className="space-y-3">
+        <motion.section layout className="order-3 space-y-3">
           <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Assessment</div>
-          <div className={cn("border p-4", assessmentBadgeTone(assessment.status))}>
-            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em]">
-              <span>{assessment.status}</span>
-              <span>{assessment.request_fulfilled ? "fulfilled" : "unfulfilled"}</span>
-            </div>
-            <div className="mt-3 text-[12px] leading-6">{assessment.coverage_summary}</div>
-            {assessment.gate_failures.length > 0 ? (
-              <div className="mt-3 text-[11px] leading-5">Gate failures: {assessment.gate_failures.join(", ")}</div>
-            ) : null}
-          </div>
           <div className="grid gap-2 md:grid-cols-2">
             {Object.entries(assessment.minimum_coverage).map(([key, value]) => (
               <div key={key} className="flex items-center justify-between border border-white/10 px-3 py-2 text-[12px] text-white/72">
@@ -1987,11 +2141,22 @@ function SummaryPanel({
               </div>
             ))}
           </div>
+          {sessionState?.report.preflight ? (
+            <div className="border border-white/10 bg-[#101010] px-3 py-3 text-[12px] leading-6 text-white/72">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-white/38">Recon preflight</div>
+              <div className="mt-2">{sessionState.report.preflight.summary}</div>
+              {sessionState.report.coverage_debt.length > 0 ? (
+                <div className="mt-2 text-[11px] leading-5 text-white/48">
+                  Coverage debt: {sessionState.report.coverage_debt.join(", ")}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </motion.section>
       ) : null}
 
       {reconDeliverables ? (
-        <motion.section layout className="space-y-3">
+        <motion.section layout className="order-4 space-y-3">
           <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Recon Deliverables</div>
           <div className="grid gap-3 md:grid-cols-2">
             {[
@@ -2003,6 +2168,9 @@ function SummaryPanel({
               { label: "API endpoints", items: reconDeliverables.api_endpoints },
               { label: "JavaScript routes", items: reconDeliverables.javascript_routes },
               { label: "Integrations", items: reconDeliverables.third_party_integrations },
+              { label: "Storage exposure", items: reconDeliverables.storage_exposures },
+              { label: "Trust boundaries", items: reconDeliverables.trust_boundaries },
+              ...reconDeliverables.surface_clusters.map((cluster) => ({ label: cluster.label, items: cluster.items })),
             ].map(({ label, items }) =>
               items.length > 0 ? (
                 <div key={label} className="border border-white/10 bg-[#101010] p-3">
@@ -2019,20 +2187,27 @@ function SummaryPanel({
               ) : null,
             )}
           </div>
-          {reconDeliverables.next_actions.length > 0 ? (
-            <div className="border border-white/10 bg-[#101010] p-3">
-              <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/35">Next actions</div>
-              <div className="space-y-2 text-[12px] leading-6 text-white/68">
-                {reconDeliverables.next_actions.slice(0, 10).map((item) => (
-                  <div key={item.value}>- {item.value}</div>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </motion.section>
       ) : null}
 
-      <motion.section layout className="space-y-3 pb-4">
+      {nextActionTodos.length > 0 ? (
+        <motion.section layout className={cn("space-y-3", rightRailStage === "after" ? "order-5" : "order-2")}>
+          <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Next actions</div>
+          <div className="space-y-2">
+            {nextActionTodos.map((todo) => (
+              <div key={todo.id} className="flex items-center justify-between gap-3 border border-white/10 px-3 py-2 text-[12px] text-white/72">
+                <div className="flex min-w-0 items-center gap-3">
+                  <TodoMark status={todo.status} />
+                  <span className="min-w-0 text-[12px] leading-6 text-white/72">{todo.label}</span>
+                </div>
+                <div className={cn("shrink-0 text-[12px]", todoStatusTone(todo.status))}>{todo.status}</div>
+              </div>
+            ))}
+          </div>
+        </motion.section>
+      ) : null}
+
+      <motion.section layout className="order-6 space-y-3 pb-4">
         <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">Connected Workers</div>
         {connectedSessionWorkers.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">

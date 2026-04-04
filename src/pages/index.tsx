@@ -1,11 +1,15 @@
+import { useRouter } from "next/router"
+
 import { PatriotDashboard } from "@/components/patriot/patriot-dashboard"
 import { PATRIOT_PAGE_SEO, PatriotPageHead } from "@/components/patriot/patriot-page-head"
 
 export default function HomePage() {
+  const router = useRouter()
+
   return (
     <>
       <PatriotPageHead {...PATRIOT_PAGE_SEO.home} />
-      <PatriotDashboard />
+      <PatriotDashboard forceNewChat={router.query.newChat === "1"} />
     </>
   )
 }

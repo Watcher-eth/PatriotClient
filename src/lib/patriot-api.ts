@@ -1,3 +1,5 @@
+import { getOrLoadCachedValue, invalidateCachedValue, peekCachedValue, setCachedValue } from "@/lib/request-cache"
+
 export type WorkerCapability =
   | "lan_access"
   | "wireless_monitor"
@@ -724,6 +726,44 @@ function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "")
 }
 
+export type QueryRequestOptions = {
+  forceRefresh?: boolean
+}
+
+const cacheTtls = {
+  sessions: 15_000,
+  sessionState: 5_000,
+  sessionMessages: 5_000,
+  workers: 10_000,
+} as const
+
+function buildCacheKey(baseUrl: string, resource: string, identifier?: string) {
+  return [trimTrailingSlash(baseUrl), resource, identifier].filter(Boolean).join("::")
+}
+
+function getSessionsCacheKey(baseUrl: string) {
+  return buildCacheKey(baseUrl, "sessions")
+}
+
+function getSessionStateCacheKey(baseUrl: string, sessionId: string) {
+  return buildCacheKey(baseUrl, "session-state", sessionId)
+}
+
+function getSessionMessagesCacheKey(baseUrl: string, sessionId: string) {
+  return buildCacheKey(baseUrl, "session-messages", sessionId)
+}
+
+function getWorkersCacheKey(baseUrl: string) {
+  return buildCacheKey(baseUrl, "workers")
+}
+
+function invalidateSessionCache(baseUrl: string, sessionId?: string) {
+  invalidateCachedValue(getSessionsCacheKey(baseUrl))
+  if (!sessionId) return
+  invalidateCachedValue(getSessionStateCacheKey(baseUrl, sessionId))
+  invalidateCachedValue(getSessionMessagesCacheKey(baseUrl, sessionId))
+}
+
 export function resolvePatriotApiBase(explicitBase?: string) {
   if (explicitBase) return trimTrailingSlash(explicitBase)
 
@@ -765,22 +805,72 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   return (await response.json()) as T
 }
 
+async function requestWithCache<T>(
+  baseUrl: string,
+  path: string,
+  cacheKey: string,
+  ttlMs: number,
+  options?: QueryRequestOptions,
+  init?: RequestInit,
+) {
+  return await getOrLoadCachedValue({
+    key: cacheKey,
+    ttlMs,
+    forceRefresh: options?.forceRefresh,
+    load: async () => await request<T>(baseUrl, path, init),
+  })
+}
+
 export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
   const resolvedBase = trimTrailingSlash(baseUrl)
 
   return {
     baseUrl: resolvedBase,
     listRuns: () => request<{ runs: RunRecord[] }>(resolvedBase, "/v1/runs"),
-    listSessions: () => request<{ sessions: SessionRecord[] }>(resolvedBase, "/v1/sessions"),
-    listWorkers: () => request<{ workers: WorkerRecord[] }>(resolvedBase, "/v1/workers"),
+    listSessions: (options?: QueryRequestOptions) =>
+      requestWithCache<{ sessions: SessionRecord[] }>(
+        resolvedBase,
+        "/v1/sessions",
+        getSessionsCacheKey(resolvedBase),
+        cacheTtls.sessions,
+        options,
+      ),
+    peekSessions: () => peekCachedValue<{ sessions: SessionRecord[] }>(getSessionsCacheKey(resolvedBase)),
+    primeSessions: (sessions: SessionRecord[]) =>
+      setCachedValue(getSessionsCacheKey(resolvedBase), { sessions }, cacheTtls.sessions),
+    prefetchSessions: async () => {
+      await requestWithCache<{ sessions: SessionRecord[] }>(
+        resolvedBase,
+        "/v1/sessions",
+        getSessionsCacheKey(resolvedBase),
+        cacheTtls.sessions,
+      )
+    },
+    listWorkers: (options?: QueryRequestOptions) =>
+      requestWithCache<{ workers: WorkerRecord[] }>(
+        resolvedBase,
+        "/v1/workers",
+        getWorkersCacheKey(resolvedBase),
+        cacheTtls.workers,
+        options,
+      ),
     createSession: (body: { title?: string; createdBy?: string; metadata?: Record<string, unknown> }) =>
       request<SessionRecord>(resolvedBase, "/v1/sessions", {
         method: "POST",
         body: JSON.stringify(body),
+      }).then((session) => {
+        invalidateSessionCache(resolvedBase)
+        return session
       }),
     getSession: (sessionId: string) => request<SessionRecord>(resolvedBase, `/v1/sessions/${sessionId}`),
-    getSessionMessages: (sessionId: string) =>
-      request<{ messages: SessionMessageRecord[] }>(resolvedBase, `/v1/sessions/${sessionId}/messages`),
+    getSessionMessages: (sessionId: string, options?: QueryRequestOptions) =>
+      requestWithCache<{ messages: SessionMessageRecord[] }>(
+        resolvedBase,
+        `/v1/sessions/${sessionId}/messages`,
+        getSessionMessagesCacheKey(resolvedBase, sessionId),
+        cacheTtls.sessionMessages,
+        options,
+      ),
     postSessionMessage: (
       sessionId: string,
       body: {
@@ -802,7 +892,10 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
           method: "POST",
           body: JSON.stringify(body),
         },
-      ),
+      ).then((result) => {
+        invalidateSessionCache(resolvedBase, sessionId)
+        return result
+      }),
     resumePendingLocalRun: (
       sessionId: string,
       body: {
@@ -820,10 +913,35 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
       request<RunRecord>(resolvedBase, `/v1/sessions/${sessionId}/resume-pending-local-run`, {
         method: "POST",
         body: JSON.stringify(body),
+      }).then((run) => {
+        invalidateSessionCache(resolvedBase, sessionId)
+        return run
       }),
     getSessionRuns: (sessionId: string) => request<{ runs: RunRecord[] }>(resolvedBase, `/v1/sessions/${sessionId}/runs`),
-    getSessionState: (sessionId: string) =>
-      request<SessionStateResponse>(resolvedBase, `/v1/sessions/${sessionId}/state`),
+    getSessionState: (sessionId: string, options?: QueryRequestOptions) =>
+      requestWithCache<SessionStateResponse>(
+        resolvedBase,
+        `/v1/sessions/${sessionId}/state`,
+        getSessionStateCacheKey(resolvedBase, sessionId),
+        cacheTtls.sessionState,
+        options,
+      ),
+    prefetchSessionDetail: async (sessionId: string) => {
+      await Promise.all([
+        requestWithCache<SessionStateResponse>(
+          resolvedBase,
+          `/v1/sessions/${sessionId}/state`,
+          getSessionStateCacheKey(resolvedBase, sessionId),
+          cacheTtls.sessionState,
+        ),
+        requestWithCache<{ messages: SessionMessageRecord[] }>(
+          resolvedBase,
+          `/v1/sessions/${sessionId}/messages`,
+          getSessionMessagesCacheKey(resolvedBase, sessionId),
+          cacheTtls.sessionMessages,
+        ),
+      ])
+    },
     getRunArtifacts: (runId: string) => request<{ artifacts: ArtifactRecord[] }>(resolvedBase, `/v1/runs/${runId}/artifacts`),
     getRunReport: (runId: string) => request<StableRunReport>(resolvedBase, `/v1/runs/${runId}/report`),
     getRunTimeline: (runId: string) => request<{ events: TimelineEvent[] }>(resolvedBase, `/v1/runs/${runId}/timeline`),

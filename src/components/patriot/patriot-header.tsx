@@ -1,7 +1,10 @@
 import type { ReactNode } from "react"
 import Link from "next/link"
 import Image from "next/image"
+import { useRouter } from "next/router"
 import { ExternalLink, Settings } from "lucide-react"
+
+import { patriotApi } from "@/lib/patriot-api"
 import { cn } from "@/lib/utils"
 
 type PatriotHeaderProps = {
@@ -12,7 +15,7 @@ type PatriotHeaderProps = {
 }
 
 const navItems: Array<{ id: NonNullable<PatriotHeaderProps["active"]>; label: string; href: string }> = [
-  { id: "console", label: "Operator console", href: "/" },
+  { id: "console", label: "Operator console", href: "/?newChat=1" },
   { id: "sessions", label: "Sessions", href: "/sessions" },
   { id: "reports", label: "Reports", href: "/reports" },
 ]
@@ -58,6 +61,15 @@ export function ActivityStatusBadge({
 }
 
 export function PatriotHeader({ active = "console", status = "inactive", statusSlot, settingsSlot }: PatriotHeaderProps) {
+  const router = useRouter()
+
+  const warmRoute = (href: string) => {
+    void router.prefetch(href)
+    if (href === "/sessions") {
+      void patriotApi.prefetchSessions()
+    }
+  }
+
   return (
     <header className="flex h-[52px] items-center justify-between border-b border-white/10 bg-[#101010] px-4 font-mono">
       <div className="flex min-w-0 flex-1 items-center">
@@ -79,6 +91,8 @@ export function PatriotHeader({ active = "console", status = "inactive", statusS
           <Link
             key={item.id}
             href={item.href}
+            onMouseEnter={() => warmRoute(item.href)}
+            onFocus={() => warmRoute(item.href)}
             className={cn(
               "text-[11px] uppercase tracking-[0.24em] transition-colors",
               item.id === active ? "text-white" : "text-white/45 hover:text-white",

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react"
+import { useRouter } from "next/router"
 import {
   AlertTriangle,
   Boxes,
@@ -543,10 +544,16 @@ function getTraceToolSignature(event: TimelineEvent) {
 
 type PatriotDashboardProps = {
   sessionId?: string
+  forceNewChat?: boolean
   onSessionChange?: (sessionId: string) => void
 }
 
-export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }: PatriotDashboardProps = {}) {
+export function PatriotDashboard({
+  sessionId: routeSessionId,
+  forceNewChat = false,
+  onSessionChange,
+}: PatriotDashboardProps = {}) {
+  const router = useRouter()
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatContentRef = useRef<HTMLDivElement | null>(null)
   const shouldStickChatToBottomRef = useRef(true)
@@ -692,11 +699,61 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
     startTransition(() => {
       setSessions(response.sessions)
       setSelectedSessionId((current) => {
-        if (current || routeSessionId || response.sessions.length === 0) return current
+        if (current || routeSessionId || forceNewChat || response.sessions.length === 0) return current
         return response.sessions[0]!.id
       })
     })
   }
+
+  const resetToBlankConsole = () => {
+    sessionLoadRequestIdRef.current += 1
+    traceSessionIdRef.current = null
+    selectedSessionIdRef.current = null
+    selectedRunIdRef.current = null
+    startTransition(() => {
+      setSelectedSessionId(null)
+      setSelectedRunId(null)
+      setSessionState(null)
+      setMessages([])
+      setTimelineEvents([])
+      setArtifacts([])
+      setRunAssignments([])
+      setDraft("")
+      setError(null)
+      setActiveTab("summary")
+    })
+  }
+
+  const createFreshSession = useEffectEvent(async () => {
+    const session = await patriotApi.createSession({
+      title: `Session ${new Date().toLocaleDateString()}`,
+      createdBy: "operator",
+    })
+
+    sessionLoadRequestIdRef.current += 1
+    startTransition(() => {
+      setSessions((current) => {
+        const next = [...current.filter((item) => item.id !== session.id), session]
+        return next.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      })
+      setSelectedSessionId(session.id)
+      setMessages([])
+      setSessionState(null)
+      setSelectedRunId(null)
+      setTimelineEvents([])
+      setArtifacts([])
+      setRunAssignments([])
+    })
+
+    onSessionChange?.(session.id)
+    if (!onSessionChange && router.query.newChat === "1") {
+      await router.replace("/", undefined, { shallow: true })
+    }
+    void syncSessionsList().catch((err) => {
+      setError(err instanceof Error ? err.message : String(err))
+    })
+    return session.id
+  })
 
   const loadSessionState = async (sessionId: string) => {
     const requestId = ++sessionLoadRequestIdRef.current
@@ -812,19 +869,28 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
   }, [])
 
   useEffect(() => {
-    if (!routeSessionId) return
-    sessionLoadRequestIdRef.current += 1
-    startTransition(() => {
-      setSelectedSessionId(routeSessionId)
-      setSelectedRunId(null)
-      setSessionState(null)
-      setMessages([])
-      setTimelineEvents([])
-      setArtifacts([])
-      setRunAssignments([])
-      setError(null)
-    })
-  }, [routeSessionId])
+    if (routeSessionId) {
+      sessionLoadRequestIdRef.current += 1
+      startTransition(() => {
+        setSelectedSessionId(routeSessionId)
+        setSelectedRunId(null)
+        setSessionState(null)
+        setMessages([])
+        setTimelineEvents([])
+        setArtifacts([])
+        setRunAssignments([])
+        setError(null)
+      })
+      return
+    }
+
+    if (forceNewChat) {
+      resetToBlankConsole()
+      void createFreshSession().catch((err) => {
+        setError(err instanceof Error ? err.message : String(err))
+      })
+    }
+  }, [createFreshSession, forceNewChat, routeSessionId])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -970,33 +1036,12 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
     }
   }, [deferredSessionId, orderedSessionRunIds, orderedSessionRunIdsKey, selectedSessionId])
 
-  const createSession = async () => {
+  const startNewChat = async () => {
     setIsCreatingSession(true)
     setError(null)
     try {
-      const session = await patriotApi.createSession({
-        title: `Session ${new Date().toLocaleDateString()}`,
-        createdBy: "operator",
-      })
-      sessionLoadRequestIdRef.current += 1
-      startTransition(() => {
-        setSessions((current) => {
-          const next = [...current.filter((item) => item.id !== session.id), session]
-          return next.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        })
-        setSelectedSessionId(session.id)
-        setMessages([])
-        setSessionState(null)
-        setSelectedRunId(null)
-        setTimelineEvents([])
-        setArtifacts([])
-        setRunAssignments([])
-        setDraft("")
-      })
-      onSessionChange?.(session.id)
-      void syncSessionsList().catch((err) => {
-        setError(err instanceof Error ? err.message : String(err))
-      })
+      resetToBlankConsole()
+      await createFreshSession()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1006,31 +1051,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
 
   const ensureSession = async () => {
     if (selectedSessionId) return selectedSessionId
-
-    const session = await patriotApi.createSession({
-      title: `Session ${new Date().toLocaleDateString()}`,
-      createdBy: "operator",
-    })
-
-    sessionLoadRequestIdRef.current += 1
-    startTransition(() => {
-      setSessions((current) => {
-        const next = [...current.filter((item) => item.id !== session.id), session]
-        return next.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      })
-      setSelectedSessionId(session.id)
-      setMessages([])
-      setSessionState(null)
-      setSelectedRunId(null)
-      setTimelineEvents([])
-      setArtifacts([])
-      setRunAssignments([])
-    })
-    onSessionChange?.(session.id)
-    void syncSessionsList().catch((err) => {
-      setError(err instanceof Error ? err.message : String(err))
-    })
-    return session.id
+    return await createFreshSession()
   }
 
   const submitMessage = async () => {
@@ -1244,7 +1265,7 @@ export function PatriotDashboard({ sessionId: routeSessionId, onSessionChange }:
               </div>
               <Button
                 type="button"
-                onClick={() => void createSession()}
+                onClick={() => void startNewChat()}
                 disabled={isCreatingSession}
                 className="rounded-none border border-[#ec3844] bg-[#ec3844] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-white hover:bg-[#d82d39]"
               >

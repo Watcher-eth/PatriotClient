@@ -1,7 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
+import { useRouter } from "next/router"
+import { startTransition, useEffect, useState } from "react"
 import { ArrowRight, LoaderCircle } from "lucide-react"
 
 import { PatriotNoiseShell } from "@/components/patriot/patriot-noise-shell"
@@ -17,20 +18,36 @@ function formatDateTime(value?: string) {
   })
 }
 
-export function PatriotSessionsPage() {
-  const [sessions, setSessions] = useState<SessionRecord[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+export function PatriotSessionsPage({ initialSessions }: { initialSessions?: SessionRecord[] }) {
+  const router = useRouter()
+  const seededSessions = initialSessions ?? patriotApi.peekSessions()?.value.sessions
+  const [sessions, setSessions] = useState<SessionRecord[]>(() => seededSessions ?? [])
+  const [isLoading, setIsLoading] = useState(() => seededSessions === undefined)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
+    const hasSeedData = initialSessions !== undefined || patriotApi.peekSessions() !== null
+
+    if (initialSessions !== undefined) {
+      patriotApi.primeSessions(initialSessions)
+    }
+
+    if (hasSeedData) {
+      setIsLoading(false)
+    }
 
     async function loadSessions() {
+      if (!hasSeedData) {
+        setIsLoading(true)
+      }
       setError(null)
       try {
-        const response = await patriotApi.listSessions()
+        const response = await patriotApi.listSessions({ forceRefresh: hasSeedData })
         if (!active) return
-        setSessions(response.sessions)
+        startTransition(() => {
+          setSessions(response.sessions)
+        })
       } catch (err) {
         if (!active) return
         setError(err instanceof Error ? err.message : String(err))
@@ -44,7 +61,12 @@ export function PatriotSessionsPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [initialSessions])
+
+  const warmSessionRoute = (sessionId: string) => {
+    void router.prefetch(`/session/${sessionId}`)
+    void patriotApi.prefetchSessionDetail(sessionId)
+  }
 
   return (
     <PatriotNoiseShell active="sessions">
@@ -75,7 +97,10 @@ export function PatriotSessionsPage() {
               <Link
                 key={session.id}
                 href={`/session/${session.id}`}
+                onMouseEnter={() => warmSessionRoute(session.id)}
+                onFocus={() => warmSessionRoute(session.id)}
                 className="group border border-white/10 bg-[#101010] px-4 py-4 transition-colors hover:border-white/20 hover:bg-[#101010]"
+                style={{ contentVisibility: "auto", containIntrinsicSize: "224px" }}
               >
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">

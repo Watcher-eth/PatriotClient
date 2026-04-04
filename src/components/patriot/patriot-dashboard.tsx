@@ -554,6 +554,8 @@ export function PatriotDashboard({
   onSessionChange,
 }: PatriotDashboardProps = {}) {
   const router = useRouter()
+  const initialCachedSessionState = routeSessionId ? patriotApi.peekSessionState(routeSessionId)?.value ?? null : null
+  const initialCachedMessages = routeSessionId ? patriotApi.peekSessionMessages(routeSessionId)?.value.messages ?? [] : []
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatContentRef = useRef<HTMLDivElement | null>(null)
   const shouldStickChatToBottomRef = useRef(true)
@@ -567,15 +569,15 @@ export function PatriotDashboard({
   const [workers, setWorkers] = useState<WorkerRecord[]>([])
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(routeSessionId ?? null)
   const deferredSessionId = useDeferredValue(selectedSessionId)
-  const [sessionState, setSessionState] = useState<SessionStateResponse | null>(null)
-  const [messages, setMessages] = useState<SessionMessageRecord[]>([])
+  const [sessionState, setSessionState] = useState<SessionStateResponse | null>(initialCachedSessionState)
+  const [messages, setMessages] = useState<SessionMessageRecord[]>(initialCachedMessages)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([])
   const [runAssignments, setRunAssignments] = useState<RunAssignmentRecord[]>([])
   const [draft, setDraft] = useState("")
   const [activeTab, setActiveTab] = useState<ViewTab>("summary")
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(routeSessionId !== undefined && initialCachedSessionState === null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
@@ -757,12 +759,15 @@ export function PatriotDashboard({
 
   const loadSessionState = async (sessionId: string) => {
     const requestId = ++sessionLoadRequestIdRef.current
-    setIsLoading(true)
+    const hasCachedSession = patriotApi.peekSessionState(sessionId) !== null
+    if (!hasCachedSession) {
+      setIsLoading(true)
+    }
     setError(null)
     try {
       const [stateResponse, messagesResponse] = await Promise.all([
-        patriotApi.getSessionState(sessionId),
-        patriotApi.getSessionMessages(sessionId),
+        patriotApi.getSessionState(sessionId, { forceRefresh: hasCachedSession }),
+        patriotApi.getSessionMessages(sessionId, { forceRefresh: hasCachedSession }),
       ])
 
       if (requestId !== sessionLoadRequestIdRef.current || selectedSessionIdRef.current !== sessionId) return
@@ -870,17 +875,20 @@ export function PatriotDashboard({
 
   useEffect(() => {
     if (routeSessionId) {
+      const cachedSessionState = patriotApi.peekSessionState(routeSessionId)?.value ?? null
+      const cachedMessages = patriotApi.peekSessionMessages(routeSessionId)?.value.messages ?? []
       sessionLoadRequestIdRef.current += 1
       startTransition(() => {
         setSelectedSessionId(routeSessionId)
         setSelectedRunId(null)
-        setSessionState(null)
-        setMessages([])
+        setSessionState(cachedSessionState)
+        setMessages(cachedMessages)
         setTimelineEvents([])
         setArtifacts([])
         setRunAssignments([])
         setError(null)
       })
+      setIsLoading(cachedSessionState === null)
       return
     }
 

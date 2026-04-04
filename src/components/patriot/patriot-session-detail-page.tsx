@@ -28,22 +28,31 @@ function SessionMetric({ label, value, detail }: { label: string; value: string;
 }
 
 export function PatriotSessionDetailPage({ sessionId }: { sessionId: string }) {
-  const [sessionState, setSessionState] = useState<SessionStateResponse | null>(null)
-  const [messages, setMessages] = useState<SessionMessageRecord[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const cachedSessionState = sessionId ? patriotApi.peekSessionState(sessionId)?.value ?? null : null
+  const cachedMessages = sessionId ? patriotApi.peekSessionMessages(sessionId)?.value.messages ?? [] : []
+  const [sessionState, setSessionState] = useState<SessionStateResponse | null>(() => cachedSessionState)
+  const [messages, setMessages] = useState<SessionMessageRecord[]>(() => cachedMessages)
+  const [isLoading, setIsLoading] = useState(() => cachedSessionState === null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!sessionId) return
     let active = true
+    const hasCachedSession = patriotApi.peekSessionState(sessionId) !== null
+
+    if (hasCachedSession) {
+      setIsLoading(false)
+    }
 
     async function loadSession() {
-      setIsLoading(true)
+      if (!hasCachedSession) {
+        setIsLoading(true)
+      }
       setError(null)
       try {
         const [stateResponse, messagesResponse] = await Promise.all([
-          patriotApi.getSessionState(sessionId),
-          patriotApi.getSessionMessages(sessionId),
+          patriotApi.getSessionState(sessionId, { forceRefresh: hasCachedSession }),
+          patriotApi.getSessionMessages(sessionId, { forceRefresh: hasCachedSession }),
         ])
         if (!active) return
         startTransition(() => {

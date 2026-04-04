@@ -871,6 +871,8 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
         cacheTtls.sessionMessages,
         options,
       ),
+    peekSessionMessages: (sessionId: string) =>
+      peekCachedValue<{ messages: SessionMessageRecord[] }>(getSessionMessagesCacheKey(resolvedBase, sessionId)),
     postSessionMessage: (
       sessionId: string,
       body: {
@@ -926,6 +928,8 @@ export function createPatriotApi(baseUrl = resolvePatriotApiBase()) {
         cacheTtls.sessionState,
         options,
       ),
+    peekSessionState: (sessionId: string) =>
+      peekCachedValue<SessionStateResponse>(getSessionStateCacheKey(resolvedBase, sessionId)),
     prefetchSessionDetail: async (sessionId: string) => {
       await Promise.all([
         requestWithCache<SessionStateResponse>(

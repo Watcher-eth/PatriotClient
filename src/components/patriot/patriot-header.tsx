@@ -102,7 +102,7 @@ export function PatriotHeader({ active = "console", status = "inactive", statusS
           </Link>
         ))}
         <a
-          href="https://www.daedalus-industries.de"
+          href="/docs"
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-1 text-[11px] uppercase tracking-[0.24em] text-white/45 hover:text-white"

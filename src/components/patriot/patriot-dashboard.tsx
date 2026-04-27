@@ -502,7 +502,7 @@ function isDuplicatePendingLocalSetupMessage({
   const hasCommand = pendingLocalCommand ? content.includes(pendingLocalCommand) : false
 
   return hasSetupIntro || hasSetupHeading || hasContinueSystemLine || hasOriginalRequest || hasMinimumVersion || hasCommand
-}
+}  
 
 function formatTraceEvent(event: TimelineEvent) {
   if (event.kind === "tool") {

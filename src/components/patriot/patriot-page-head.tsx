@@ -85,6 +85,11 @@ export const PATRIOT_PAGE_SEO = {
     description: "Review Patriot run reports, findings, evidence, assets, and artifacts from completed operations.",
     path: "/reports",
   },
+  docs: {
+    title: "Documentation",
+    description: "Explore Patriot documentation guides and its architecture.",
+    path: "/docs",
+  },
 } satisfies Record<string, SeoConfig>
 
 export function PatriotPageHead({ title, description, path, imagePath = DEFAULT_IMAGE_PATH }: SeoConfig) {
